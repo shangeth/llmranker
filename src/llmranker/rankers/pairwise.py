@@ -4,7 +4,7 @@ import logging
 import re
 
 from ..llm import LLMConfig
-from ..prompts import pairwise_system_prompt, pairwise_user_prompt
+from ..prompts import extract_final_answer, pairwise_system_prompt, pairwise_user_prompt
 from ..types import Candidate
 from .base import BaseRanker
 
@@ -35,6 +35,14 @@ class PairwiseRanker(BaseRanker):
     relevance score. Here the output `score` is a synthetic rank position
     (higher = more relevant) since comparisons only ever establish relative
     order, not an absolute value.
+
+    `debias_position`: LLMs have a documented bias toward whichever
+    candidate is listed first (or second, model-dependent) in a pairwise
+    prompt. When True, every comparison is run both ways (a-as-A/b-as-B and
+    b-as-A/a-as-B); the result is only trusted when both agree, otherwise
+    the comparison is treated as too ambiguous to trust and defaults to `a`
+    (the original first argument). This roughly **doubles** the LLM calls
+    for whichever comparisons it's applied to -- off by default.
     """
 
     def __init__(
@@ -46,19 +54,23 @@ class PairwiseRanker(BaseRanker):
         system_prompt: str | None = None,
         name: str | None = None,
         max_concurrency: int = 5,
+        reasoning: bool = False,
+        debias_position: bool = False,
     ):
-        super().__init__(config, item_label, system_prompt, name, max_concurrency)
+        super().__init__(config, item_label, system_prompt, name, max_concurrency, reasoning)
         if method not in _METHODS:
             raise ValueError(f"Unknown method {method!r}, expected one of {_METHODS}")
         self.method = method
         self.k = k
+        self.debias_position = debias_position
 
     def _build_compare_messages(self, query: str, a: Candidate, b: Candidate) -> list[dict]:
         system = self.system_prompt_override or pairwise_system_prompt(self.item_label)
-        user = pairwise_user_prompt(query, [a, b], self.item_label)
+        user = pairwise_user_prompt(query, [a, b], self.item_label, self.reasoning)
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
     def _parse_label(self, text: str, a: Candidate, b: Candidate) -> Candidate:
+        text = extract_final_answer(text)
         match = _LABEL_RE.search(text.strip())
         if match is None:
             logger.warning("Could not parse an A/B label from output: %r", text)
@@ -66,9 +78,18 @@ class PairwiseRanker(BaseRanker):
         return a if match.group(1) == "A" else b
 
     def compare(self, query: str, a: Candidate, b: Candidate) -> Candidate:
-        """Return whichever of `a`/`b` the LLM judges more relevant to `query`."""
-        response = self._call(self._build_compare_messages(query, a, b))
-        return self._parse_label(response.text, a, b)
+        """Return whichever of `a`/`b` the LLM judges more relevant to `query`.
+
+        See `debias_position` on the class for the bidirectional-agreement
+        behavior when enabled.
+        """
+        forward = self._call(self._build_compare_messages(query, a, b))
+        forward_winner = self._parse_label(forward.text, a, b)
+        if not self.debias_position:
+            return forward_winner
+        backward = self._call(self._build_compare_messages(query, b, a))
+        backward_winner = self._parse_label(backward.text, b, a)
+        return forward_winner if forward_winner is backward_winner else a
 
     def _better(self, query: str, a: Candidate, b: Candidate) -> bool:
         return self.compare(query, a, b) is a
@@ -135,11 +156,29 @@ class PairwiseRanker(BaseRanker):
 
     def _allpairs(self, query: str, arr: list[Candidate], k: int) -> list[Candidate]:
         pairs = [(arr[i], arr[j]) for i in range(len(arr)) for j in range(i + 1, len(arr))]
-        batches = [self._build_compare_messages(query, a, b) for a, b in pairs]
-        responses = self._call_many(batches)
+
+        if not self.debias_position:
+            batches = [self._build_compare_messages(query, a, b) for a, b in pairs]
+            responses = self._call_many(batches)
+            winners = [self._parse_label(r.text, a, b) for (a, b), r in zip(pairs, responses)]
+        else:
+            # Forward and backward calls for every pair are all mutually
+            # independent, so dispatch them together in one _call_many --
+            # doubles the call count but not the wall-clock time under
+            # concurrency.
+            forward_batches = [self._build_compare_messages(query, a, b) for a, b in pairs]
+            backward_batches = [self._build_compare_messages(query, b, a) for a, b in pairs]
+            responses = self._call_many(forward_batches + backward_batches)
+            forward_responses = responses[: len(pairs)]
+            backward_responses = responses[len(pairs) :]
+            winners = []
+            for (a, b), fr, br in zip(pairs, forward_responses, backward_responses):
+                fw = self._parse_label(fr.text, a, b)
+                bw = self._parse_label(br.text, b, a)
+                winners.append(fw if fw is bw else a)
 
         wins = {c.id: 0 for c in arr}
-        for (a, b), response in zip(pairs, responses):
-            wins[self._parse_label(response.text, a, b).id] += 1
+        for winner in winners:
+            wins[winner.id] += 1
         ranked = sorted(arr, key=lambda c: wins[c.id], reverse=True)
         return ranked[:k]

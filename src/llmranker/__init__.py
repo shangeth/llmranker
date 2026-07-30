@@ -7,6 +7,7 @@ from .rankers import (
     PairwiseRanker,
     PointwiseRanker,
     SetwiseRanker,
+    TourRankRanker,
 )
 from .types import Candidate
 
@@ -22,5 +23,6 @@ __all__ = [
     "PointwiseRanker",
     "RankingMetrics",
     "SetwiseRanker",
+    "TourRankRanker",
     "compare_rankers",
 ]

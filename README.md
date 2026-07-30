@@ -1,14 +1,14 @@
 # llmranker
 
-**LLM-based rerankers for any provider.** Pointwise, pairwise, listwise, and
-setwise ranking strategies implemented on top of [LiteLLM](https://github.com/BerriAI/litellm),
-so the same code runs against OpenAI, Gemini, Anthropic, Azure, Bedrock,
-local Ollama models, or any of the 100+ providers LiteLLM supports -- just
-change a model string.
+**LLM-based rerankers for any provider.** Pointwise, pairwise, listwise,
+setwise, and tournament-style (TourRank) ranking strategies implemented on
+top of [LiteLLM](https://github.com/BerriAI/litellm), so the same code runs
+against OpenAI, Gemini, Anthropic, Azure, Bedrock, local Ollama models, or
+any of the 100+ providers LiteLLM supports -- just change a model string.
 
 [![PyPI](https://img.shields.io/pypi/v/llmranker.svg)](https://pypi.org/project/llmranker/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/shangeth/llmranker/actions/workflows/ci.yml/badge.svg)](https://github.com/shangeth/llmranker/actions/workflows/ci.yml)
+[![CI](https://github.com/shangeth/llmranker/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/shangeth/llmranker/actions/workflows/ci.yml)
 
 ```python
 from llmranker import Candidate, LLMConfig, SetwiseRanker
@@ -32,16 +32,18 @@ often just *ask* an LLM which candidate is more relevant to a query. This
 package implements the four ways of doing that described in
 [**"A Setwise Approach for Effective and Highly Efficient Zero-shot Ranking
 with Large Language Models"**](https://arxiv.org/abs/2310.09497) (Zhuang et
-al., 2023):
+al., 2023) -- plus a fifth, tournament-style paradigm from more recent
+research (see [`TourRankRanker`](#choosing-a-strategy) below):
 
 | Strategy | How it works | LLM calls | Notes |
 |---|---|---|---|
 | **Pointwise** | Score each candidate independently (0-10) | `O(n)` | Cheapest, but ignores relative preference between candidates |
-| **Pairwise** | Repeatedly ask "A or B?", sort via heapsort/bubblesort/allpairs | `O(n log n)` to `O(n²)` | Simple, robust comparisons |
-| **Setwise** | Ask "which of these `k` is best?", sort via `k`-ary heapsort/bubblesort | `O(n log n / log k)` | Fewer calls than pairwise for the same sort, longer prompts |
+| **Pairwise** | Repeatedly ask "A or B?", sort via heapsort/bubblesort/allpairs | `O(n log n)` to `O(n²)` | Simple, robust comparisons; optional bidirectional bias-checking |
+| **Setwise** | Ask "which of these `k` is best?", sort via `k`-ary heapsort/bubblesort/insertion | `O(n log n / log k)` | Fewer calls than pairwise for the same sort, longer prompts |
 | **Listwise** | Ask the LLM to output a full ranking of a sliding window at once | `O(n / step)` | Fewest calls, but degrades as window size grows |
+| **TourRank** | Group candidates like a sports tournament, LLM picks winners per group, repeat over several stages and tournament runs, sum points | More calls, ensembled over multiple runs | Most robust to candidate input order; see [TourRank paper](https://arxiv.org/abs/2406.11678) |
 
-All four are zero-shot: no training data, no fine-tuning, no embeddings.
+All five are zero-shot: no training data, no fine-tuning, no embeddings.
 You give it a query and a list of candidates, it gives you a ranked list.
 
 ## Why LLM-based ranking
@@ -119,6 +121,10 @@ Rough guidance, in order of what to reach for first:
   candidate (e.g. for thresholding "is this even relevant at all") rather
   than just a ranking, or when `n` is large and you can't afford
   comparisons at all.
+- Use **TourRank** when the order `candidates` arrives in is unreliable (or
+  you don't have one) and you want a result that doesn't depend on it --
+  it's more expensive than setwise, but explicitly designed to be robust to
+  input order, unlike listwise's sliding window.
 
 ## Concurrency
 
@@ -134,8 +140,9 @@ results:
 | `PointwiseRanker` | Yes -- every candidate is scored independently |
 | `PairwiseRanker(method="allpairs")` | Yes -- every comparison is independent |
 | `PairwiseRanker(method="heapsort"/"bubblesort")` | No -- each comparison's outcome determines the next one |
-| `SetwiseRanker` (either method) | No -- same reason, n-ary |
+| `SetwiseRanker` (any method, incl. `"insertion"`) | No -- same reason, n-ary |
 | `ListwiseRanker` | No -- each window's input is the previous window's output |
+| `TourRankRanker` | Yes, within a stage -- every group's LLM call is independent of the others; stages and tournament runs themselves stay sequential |
 
 For the non-parallelizable strategies, `max_concurrency` is accepted for
 constructor-signature consistency but genuinely does nothing -- that's
@@ -158,6 +165,42 @@ retry/backoff in `llmranker.llm.call_llm` handles occasional transient
 errors, but it won't save you from a provider that's rejecting bursts of
 concurrent requests outright.
 
+## Reducing position bias
+
+LLMs have a documented bias toward whichever candidate happens to be
+listed first (or second, model-dependent) in a pairwise prompt --
+independent of actual content. `PairwiseRanker` has a `debias_position`
+flag that runs each comparison both ways (swapping which candidate is
+"Item A" vs "Item B") and only trusts the result when both orderings
+agree; on disagreement it falls back to a safe default rather than
+reporting a confidently wrong answer. This roughly **doubles** the LLM
+calls for whichever comparisons it's applied to, so it's opt-in:
+
+```python
+ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), debias_position=True)
+```
+
+## Reasoning
+
+Every ranker accepts `reasoning=True`, which asks the model to think step
+by step before giving its final answer -- shown to help across a 2025 wave
+of reasoning-reranker papers (Rank1, Rank-R1, and others). This is a
+*prompting* technique, not a switch to a dedicated reasoning model -- it
+works with any chat model. (If you want to route to an actual
+reasoning-capable model instead, that's just a model string, e.g.
+`LLMConfig(model="o1-mini")` -- orthogonal to this flag, and the two can be
+combined.)
+
+```python
+ranker = SetwiseRanker(LLMConfig(model="gpt-4o-mini"), reasoning=True)
+```
+
+`reasoning=True` doesn't change how many calls are made, only prompt and
+completion content -- expect longer, more expensive completions. A low
+default `max_tokens` on some providers can truncate a reasoning chain
+before it reaches the final answer; raise it via
+`LLMConfig(extra_kwargs={"max_tokens": ...})` if you see that happen.
+
 ## Use case: hotel recommendation
 
 The flagship example lives in
@@ -173,7 +216,7 @@ cd examples/hotel_recommendation
 python run.py
 ```
 
-It runs all four strategies against the same query and candidates and
+It runs all five strategies against the same query and candidates and
 prints a side-by-side comparison of ranking quality, LLM calls, tokens,
 estimated cost, and latency using `llmranker.compare_rankers`.
 
@@ -226,7 +269,7 @@ if you have one -- e.g. from human labels or a held-out click log.
 |---|---|
 | `llmranker.types` | `Candidate(id, text, score, metadata)` |
 | `llmranker.llm` | `LLMConfig`, `call_llm`, `truncate_to_tokens`, `estimate_cost` |
-| `llmranker.rankers` | `PointwiseRanker`, `PairwiseRanker`, `SetwiseRanker`, `ListwiseRanker` |
+| `llmranker.rankers` | `PointwiseRanker`, `PairwiseRanker`, `SetwiseRanker`, `ListwiseRanker`, `TourRankRanker` |
 | `llmranker.metrics` | `RankingMetrics` (NDCG, MRR, MAE, Spearman, Kendall's Tau) |
 | `llmranker.benchmark` | `compare_rankers` |
 
@@ -246,9 +289,30 @@ pytest
 Tests run entirely offline against a fake LiteLLM backend -- no API key
 needed to contribute.
 
-## Citation
+See [`ROADMAP.md`](ROADMAP.md) for what's researched but not built yet,
+and why.
 
-If you use this package, please cite the paper it implements:
+## Citing this package
+
+If `llmranker` itself is useful to you, please cite it:
+
+```bibtex
+@software{rajaa2026llmranker,
+  author = {Rajaa, Shangeth},
+  title = {llmranker: LLM-based rerankers for any provider},
+  year = {2026},
+  url = {https://github.com/shangeth/llmranker},
+  version = {0.1.0}
+}
+```
+
+GitHub also generates a citation for you (APA or BibTeX) via the "Cite this
+repository" button in the sidebar, backed by [`CITATION.cff`](CITATION.cff).
+
+## Citing the underlying research
+
+If you use one of the ranking strategies implemented here, please also cite
+the paper(s) behind it:
 
 ```bibtex
 @article{zhuang2023setwise,
@@ -256,6 +320,20 @@ If you use this package, please cite the paper it implements:
   author={Zhuang, Shengyao and Zhuang, Honglei and Koopman, Bevan and Zuccon, Guido},
   journal={arXiv preprint arXiv:2310.09497},
   year={2023}
+}
+
+@inproceedings{podolak2025setwiseinsertion,
+  title={Beyond Reproducibility: Advancing Zero-shot LLM Reranking Efficiency with Setwise Insertion},
+  author={Podolak, Jakub and Peri{\'c}, Leon and Jani{\'c}ijevi{\'c}, Mina and Petcu, Roxana},
+  booktitle={Proceedings of the 48th International ACM SIGIR Conference on Research and Development in Information Retrieval},
+  year={2025}
+}
+
+@inproceedings{chen2025tourrank,
+  title={TourRank: Utilizing Large Language Models for Documents Ranking with a Tournament-Inspired Strategy},
+  author={Chen, Yiqun and Liu, Qi and Zhang, Yi and Sun, Weiwei and Ma, Xinyu and Yang, Wei and Shi, Daiting and Mao, Jiaxin and Yin, Dawei},
+  booktitle={Proceedings of the ACM Web Conference 2025},
+  year={2025}
 }
 ```
 

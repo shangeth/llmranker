@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "llmranker: LLM-based rerankers for any provider"
+version: 0.1.0
+date-released: 2026-07-30
+authors:
+  - family-names: Rajaa
+    given-names: Shangeth
+repository-code: "https://github.com/shangeth/llmranker"
+url: "https://github.com/shangeth/llmranker"
+license: MIT
+keywords:
+  - llm
+  - large-language-models
+  - reranking
+  - information-retrieval
+  - ranking
+  - recommendation-systems
+  - litellm

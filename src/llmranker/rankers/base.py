@@ -20,6 +20,13 @@ class BaseRanker(ABC):
     other (PointwiseRanker, PairwiseRanker's "allpairs" method) -- see each
     class's docstring for whether it applies. Set to 1 to force fully
     sequential calls (e.g. to stay under a strict rate limit).
+
+    `reasoning` asks the model to think step by step before giving its
+    final answer (a prompting technique, not a switch to a dedicated
+    reasoning model -- works with any chat model; use a reasoning-capable
+    `LLMConfig.model` for that instead). It doesn't change how many calls
+    are made, only prompt/completion content -- expect longer, more
+    expensive completions. Off by default.
     """
 
     def __init__(
@@ -29,12 +36,14 @@ class BaseRanker(ABC):
         system_prompt: str | None = None,
         name: str | None = None,
         max_concurrency: int = 5,
+        reasoning: bool = False,
     ):
         self.config = config
         self.item_label = item_label
         self.system_prompt_override = system_prompt
         self.name = name or type(self).__name__
         self.max_concurrency = max_concurrency
+        self.reasoning = reasoning
         self.total_calls = 0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0

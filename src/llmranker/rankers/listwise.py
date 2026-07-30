@@ -4,7 +4,7 @@ import logging
 import re
 
 from ..llm import LLMConfig, truncate_to_tokens
-from ..prompts import listwise_post_prompt, listwise_prefix_messages
+from ..prompts import extract_final_answer, listwise_post_prompt, listwise_prefix_messages
 from ..types import Candidate
 from .base import BaseRanker
 
@@ -50,8 +50,9 @@ class ListwiseRanker(BaseRanker):
         system_prompt: str | None = None,
         name: str | None = None,
         max_concurrency: int = 5,
+        reasoning: bool = False,
     ):
-        super().__init__(config, item_label, system_prompt, name, max_concurrency)
+        super().__init__(config, item_label, system_prompt, name, max_concurrency, reasoning)
         if step_size > window_size:
             raise ValueError("step_size must be <= window_size")
         if window_size < 2:
@@ -77,7 +78,12 @@ class ListwiseRanker(BaseRanker):
                 {"role": "assistant", "content": f"Received {self.item_label} [{rank}]."}
             )
         messages.append(
-            {"role": "user", "content": listwise_post_prompt(query, len(window), self.item_label)}
+            {
+                "role": "user",
+                "content": listwise_post_prompt(
+                    query, len(window), self.item_label, self.reasoning
+                ),
+            }
         )
         return messages
 
@@ -87,6 +93,7 @@ class ListwiseRanker(BaseRanker):
         candidate the model didn't mention is appended in its original
         position so every candidate always ends up somewhere in the output.
         """
+        text = extract_final_answer(text)
         found = [int(d) - 1 for d in _DIGIT_RE.findall(text)]
         seen = set()
         order: list[int] = []

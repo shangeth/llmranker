@@ -4,7 +4,7 @@ import logging
 import re
 
 from ..llm import LLMConfig
-from ..prompts import pointwise_system_prompt, pointwise_user_prompt
+from ..prompts import extract_final_answer, pointwise_system_prompt, pointwise_user_prompt
 from ..types import Candidate
 from .base import BaseRanker
 
@@ -36,17 +36,19 @@ class PointwiseRanker(BaseRanker):
         max_score: float = 10,
         name: str | None = None,
         max_concurrency: int = 5,
+        reasoning: bool = False,
     ):
-        super().__init__(config, item_label, system_prompt, name, max_concurrency)
+        super().__init__(config, item_label, system_prompt, name, max_concurrency, reasoning)
         self.min_score = min_score
         self.max_score = max_score
 
     def _build_messages(self, query: str, candidate: Candidate) -> list[dict]:
         system = self.system_prompt_override or pointwise_system_prompt(self.item_label)
-        user = pointwise_user_prompt(query, candidate, self.item_label)
+        user = pointwise_user_prompt(query, candidate, self.item_label, self.reasoning)
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
     def _parse_score(self, text: str) -> float:
+        text = extract_final_answer(text)
         match = _SCORE_RE.search(text)
         if match is None:
             logger.warning("Could not parse a score from output: %r", text)

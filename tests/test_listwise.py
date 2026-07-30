@@ -3,6 +3,7 @@ import re
 import pytest
 
 from llmranker.llm import LLMConfig
+from llmranker.prompts import FINAL_ANSWER_MARKER
 from llmranker.rankers.listwise import ListwiseRanker
 from llmranker.types import Candidate
 
@@ -35,6 +36,23 @@ def test_listwise_compare_reorders_single_window(fake_llm):
     reordered = ranker.compare("query", window)
 
     assert [c.id for c in reordered] == ["y", "z", "x"]
+
+
+def test_listwise_reasoning_ignores_stray_numbers_before_final_answer(fake_llm):
+    # Without marker-aware parsing, the naive digit-scan would pick up the
+    # stray "3" and "2" from the reasoning text before the real ranking,
+    # producing a corrupted order ([2,1,0] instead of the correct [2,0,1]).
+    window = [Candidate(id=str(i), text=f"item-{i}") for i in range(3)]
+    text = (
+        "There are 3 relevant factors and 2 secondary ones to consider "
+        f"here.\n\n{FINAL_ANSWER_MARKER} [3] > [1] > [2]"
+    )
+    fake_llm.responses = [text]
+
+    ranker = ListwiseRanker(LLMConfig(model="gpt-4o-mini"), window_size=3, reasoning=True)
+    reordered = ranker.compare("query", window)
+
+    assert [c.id for c in reordered] == ["2", "0", "1"]
 
 
 def test_listwise_converges_to_true_order_with_repeats(fake_llm):

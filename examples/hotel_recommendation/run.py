@@ -19,6 +19,7 @@ from llmranker import (
     PairwiseRanker,
     PointwiseRanker,
     SetwiseRanker,
+    TourRankRanker,
     compare_rankers,
 )
 
@@ -123,6 +124,9 @@ def compare_all_strategies() -> None:
         ),
         ListwiseRanker(
             LLMConfig(model=MODEL), window_size=4, step_size=2, num_repeat=2, item_label="hotel", name="listwise"
+        ),
+        TourRankRanker(
+            LLMConfig(model=MODEL), group_size=4, advance_per_group=2, item_label="hotel", name="tourrank"
         ),
     ]
     report = compare_rankers(rankers, QUERY, CANDIDATES, TRUE_RANKING)

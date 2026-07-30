@@ -4,13 +4,13 @@ import logging
 import re
 
 from ..llm import LLMConfig
-from ..prompts import setwise_system_prompt, setwise_user_prompt
+from ..prompts import extract_final_answer, setwise_system_prompt, setwise_user_prompt
 from ..types import Candidate
 from .base import BaseRanker
 
 logger = logging.getLogger("llmranker")
 
-_METHODS = ("heapsort", "bubblesort")
+_METHODS = ("heapsort", "bubblesort", "insertion")
 
 
 class SetwiseRanker(BaseRanker):
@@ -26,8 +26,21 @@ class SetwiseRanker(BaseRanker):
       - "heapsort": build a `num_child`-ary max-heap, pop the top `k`.
       - "bubblesort": k passes, each sliding the best remaining candidate to
         the front of the unranked region, `num_child` at a time.
+      - "insertion": "Setwise Insertion" (Podolak et al., SIGIR'25,
+        arXiv:2504.10509), a direct efficiency successor to the above two.
+        Sorts just the first `k` candidates from `candidates`' *existing*
+        order into a max-heap-sorted top-k, then walks the rest in chunks,
+        comparing each chunk against the current worst-of-top-k (the
+        "guard"): if the guard wins, the whole chunk is discarded in one
+        call; otherwise the winner is binary-inserted into its correct
+        position. This is much cheaper than heapsort/bubblesort when
+        `candidates` already arrives in a reasonable order (e.g. from an
+        upstream retriever/embedding search) since most chunks get
+        discarded in a single call -- it degrades toward more calls (not
+        incorrect results) on an unordered input, so the benefit depends on
+        `candidates` carrying a meaningful prior order.
 
-    Both methods are sequential comparison sorts -- each comparison's
+    All methods are sequential comparison sorts -- each comparison's
     outcome determines what gets compared next, so unlike PointwiseRanker
     or PairwiseRanker's "allpairs" method, `max_concurrency` has **no
     effect** here. It's accepted for constructor-signature consistency with
@@ -44,8 +57,9 @@ class SetwiseRanker(BaseRanker):
         system_prompt: str | None = None,
         name: str | None = None,
         max_concurrency: int = 5,
+        reasoning: bool = False,
     ):
-        super().__init__(config, item_label, system_prompt, name, max_concurrency)
+        super().__init__(config, item_label, system_prompt, name, max_concurrency, reasoning)
         if method not in _METHODS:
             raise ValueError(f"Unknown method {method!r}, expected one of {_METHODS}")
         if num_child < 2:
@@ -69,11 +83,12 @@ class SetwiseRanker(BaseRanker):
         labels = self.characters[: len(candidates)]
         label_re = re.compile(r"\b(" + "|".join(labels) + r")\b")
         system = self.system_prompt_override or setwise_system_prompt(self.item_label)
-        user = setwise_user_prompt(query, candidates, labels, self.item_label)
+        user = setwise_user_prompt(query, candidates, labels, self.item_label, self.reasoning)
         response = self._call(
             [{"role": "system", "content": system}, {"role": "user", "content": user}]
         )
-        match = label_re.search(response.text.strip())
+        text = extract_final_answer(response.text)
+        match = label_re.search(text.strip())
         if match is None:
             logger.warning("Could not parse a label from output: %r", response.text)
             return candidates[0]
@@ -86,8 +101,10 @@ class SetwiseRanker(BaseRanker):
 
         if self.method == "heapsort":
             top = self._heapsort(query, arr, k)
-        else:
+        elif self.method == "bubblesort":
             top = self._bubblesort(query, arr, k)
+        else:
+            top = self._insertion(query, arr, k)
 
         return self._finalize(top, candidates)
 
@@ -151,3 +168,37 @@ class SetwiseRanker(BaseRanker):
         for i in range(k):
             self._bubble_pass(query, arr, i, n - 1)
         return arr[:k]
+
+    # -- insertion (Setwise Insertion, arXiv:2504.10509) ------------------
+
+    def _binary_insert_position(
+        self, query: str, sorted_list: list[Candidate], item: Candidate
+    ) -> int:
+        """Find where `item` belongs in `sorted_list` (best-to-worst) using
+        O(log n) pairwise-style compare() calls."""
+        lo, hi = 0, len(sorted_list)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            winner = self.compare(query, [item, sorted_list[mid]])
+            if winner is item:
+                hi = mid
+            else:
+                lo = mid + 1
+        return lo
+
+    def _insertion(self, query: str, arr: list[Candidate], k: int) -> list[Candidate]:
+        if k <= 0:
+            return []
+        s = self._heapsort(query, arr[:k], k)
+        chunk_size = max(1, self.num_child - 1)
+        remaining = arr[k:]
+        for start in range(0, len(remaining), chunk_size):
+            chunk = remaining[start : start + chunk_size]
+            guard = s[-1]
+            winner = self.compare(query, [guard] + chunk)
+            if winner is guard:
+                continue
+            s = s[:-1]
+            pos = self._binary_insert_position(query, s, winner)
+            s.insert(pos, winner)
+        return s

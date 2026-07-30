@@ -3,6 +3,7 @@ import re
 import pytest
 
 from llmranker.llm import LLMConfig
+from llmranker.prompts import FINAL_ANSWER_MARKER
 from llmranker.rankers.pointwise import PointwiseRanker
 from llmranker.types import Candidate
 
@@ -79,3 +80,17 @@ def test_pointwise_concurrency_matches_sequential(fake_llm, max_concurrency):
     assert ranker.total_calls == 3
     assert ranker.total_prompt_tokens == 30
     assert ranker.total_completion_tokens == 15
+
+
+def test_pointwise_reasoning_ignores_stray_numbers_before_final_answer(fake_llm):
+    # Without marker-aware parsing, the naive regex would latch onto the "3"
+    # in "3 miles" and return the wrong score, never reaching the real "8".
+    text = (
+        "This hotel is within 3 miles of downtown and has 2 pools, which "
+        f"suggests strong appeal.\n\n{FINAL_ANSWER_MARKER} 8"
+    )
+    fake_llm.responses = [text]
+    candidate = Candidate(id="x", text="a nice hotel")
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), reasoning=True)
+
+    assert ranker.score("query", candidate) == 8
