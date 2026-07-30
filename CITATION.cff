@@ -1,8 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
-title: "llmranker: LLM-based rerankers for any provider"
-version: 0.1.0
-date-released: 2026-07-30
+title: "llmranker: LLM ranking and reasoning algorithms for search and recommendation"
 authors:
   - family-names: Rajaa
     given-names: Shangeth

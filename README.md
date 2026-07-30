@@ -1,10 +1,12 @@
 # llmranker
 
-**LLM-based rerankers for any provider.** Pointwise, pairwise, listwise,
-setwise, and tournament-style (TourRank) ranking strategies implemented on
-top of [LiteLLM](https://github.com/BerriAI/litellm), so the same code runs
-against OpenAI, Gemini, Anthropic, Azure, Bedrock, local Ollama models, or
-any of the 100+ providers LiteLLM supports -- just change a model string.
+**A toolkit of LLM ranking algorithms for search and recommendation --
+with reasoning on why each result is the right fit.** Currently includes
+pointwise, pairwise, listwise, setwise, and tournament-style (TourRank)
+ranking, with more strategies planned (see [`ROADMAP.md`](ROADMAP.md)),
+implemented on top of [LiteLLM](https://github.com/BerriAI/litellm) so the
+same code runs against OpenAI, Gemini, Anthropic, Azure, Bedrock, local
+Ollama models, or any of the 100+ providers LiteLLM supports.
 
 [![PyPI](https://img.shields.io/pypi/v/llmranker.svg)](https://pypi.org/project/llmranker/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -294,20 +296,21 @@ and why.
 
 ## Citing this package
 
-If `llmranker` itself is useful to you, please cite it:
+If `llmranker` itself is useful to you, please cite the repository:
 
 ```bibtex
-@software{rajaa2026llmranker,
+@software{rajaa_llmranker,
   author = {Rajaa, Shangeth},
-  title = {llmranker: LLM-based rerankers for any provider},
-  year = {2026},
-  url = {https://github.com/shangeth/llmranker},
-  version = {0.1.0}
+  title = {{llmranker}: LLM ranking and reasoning algorithms for search and recommendation},
+  url = {https://github.com/shangeth/llmranker}
 }
 ```
 
-GitHub also generates a citation for you (APA or BibTeX) via the "Cite this
-repository" button in the sidebar, backed by [`CITATION.cff`](CITATION.cff).
+For a citation pinned to the exact version/commit you used, use GitHub's
+"Cite this repository" button in the sidebar (APA or BibTeX) instead of the
+snippet above -- it reads [`CITATION.cff`](CITATION.cff) live off whatever's
+checked out, so it's always accurate without anyone needing to hand-update
+a version number in this README.
 
 ## Citing the underlying research
 
