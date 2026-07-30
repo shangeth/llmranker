@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llmranker"
+version = "0.1.0"
+description = "LLM-based rerankers (pointwise, pairwise, listwise, setwise) for any LLM provider via LiteLLM"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Shangeth Rajaa" },
+]
+keywords = ["llm", "ranking", "reranking", "recommendation", "search", "litellm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Indexing",
+]
+dependencies = [
+    "litellm>=1.40.0",
+    "tenacity>=8.2.0",
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "scikit-learn>=1.1",
+    "pandas>=1.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/shangeth/llmranker"
+Repository = "https://github.com/shangeth/llmranker"
+Issues = "https://github.com/shangeth/llmranker/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llmranker"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+# BLE001 (blind except Exception) is disabled: llm.py's tokenizer/pricing
+# fallbacks and the multi-provider example's "try this provider, skip on any
+# failure" pattern both intentionally catch broadly.
+ignore = ["BLE001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
