@@ -26,6 +26,12 @@ class SetwiseRanker(BaseRanker):
       - "heapsort": build a `num_child`-ary max-heap, pop the top `k`.
       - "bubblesort": k passes, each sliding the best remaining candidate to
         the front of the unranked region, `num_child` at a time.
+
+    Both methods are sequential comparison sorts -- each comparison's
+    outcome determines what gets compared next, so unlike PointwiseRanker
+    or PairwiseRanker's "allpairs" method, `max_concurrency` has **no
+    effect** here. It's accepted for constructor-signature consistency with
+    the other rankers only.
     """
 
     def __init__(
@@ -37,8 +43,9 @@ class SetwiseRanker(BaseRanker):
         item_label: str = "item",
         system_prompt: str | None = None,
         name: str | None = None,
+        max_concurrency: int = 5,
     ):
-        super().__init__(config, item_label, system_prompt, name)
+        super().__init__(config, item_label, system_prompt, name, max_concurrency)
         if method not in _METHODS:
             raise ValueError(f"Unknown method {method!r}, expected one of {_METHODS}")
         if num_child < 2:

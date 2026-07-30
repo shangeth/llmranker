@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import litellm
 import pytest
 
@@ -19,20 +21,28 @@ class FakeLLM:
 
     Set `.responses` to a list (consumed in call order) or a callable
     `(messages, **kwargs) -> str`. Every call is recorded in `.calls`.
+
+    Thread-safe: rankers with max_concurrency > 1 call this from multiple
+    ThreadPoolExecutor worker threads, so list-mode's index increment (and
+    the call log append) are guarded by a lock. The callable mode is safe
+    as long as the callable itself is a pure function of `messages`, which
+    is how the ground-truth responders in these tests are written.
     """
 
     def __init__(self):
         self.responses = []
         self.calls = []
         self._index = 0
+        self._lock = threading.Lock()
 
     def __call__(self, model=None, messages=None, **kwargs):
-        self.calls.append({"model": model, "messages": messages, **kwargs})
-        if callable(self.responses):
-            content = self.responses(messages)
-        else:
-            content = self.responses[self._index]
-            self._index += 1
+        with self._lock:
+            self.calls.append({"model": model, "messages": messages, **kwargs})
+            if callable(self.responses):
+                content = self.responses(messages)
+            else:
+                content = self.responses[self._index]
+                self._index += 1
         return FakeResponse(content)
 
 

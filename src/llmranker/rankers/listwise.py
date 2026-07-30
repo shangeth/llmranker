@@ -32,6 +32,11 @@ class ListwiseRanker(BaseRanker):
     `max_tokens_per_candidate`: if set, truncates each candidate's text to
         this many tokens before including it in the prompt (useful for long
         documents or small-context models). Off by default.
+
+    Every window's call depends on the previous window's output, so this
+    strategy is inherently sequential -- `max_concurrency` has **no
+    effect** here. It's accepted for constructor-signature consistency with
+    the other rankers only.
     """
 
     def __init__(
@@ -44,8 +49,9 @@ class ListwiseRanker(BaseRanker):
         item_label: str = "item",
         system_prompt: str | None = None,
         name: str | None = None,
+        max_concurrency: int = 5,
     ):
-        super().__init__(config, item_label, system_prompt, name)
+        super().__init__(config, item_label, system_prompt, name, max_concurrency)
         if step_size > window_size:
             raise ValueError("step_size must be <= window_size")
         if window_size < 2:

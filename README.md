@@ -120,6 +120,44 @@ Rough guidance, in order of what to reach for first:
   than just a ranking, or when `n` is large and you can't afford
   comparisons at all.
 
+## Concurrency
+
+Every ranker takes a `max_concurrency` param (default `5`) that controls
+how many LLM calls run at once via a thread pool -- calls are parallel by
+default, and `max_concurrency=1` forces fully sequential behavior.
+
+It only speeds up strategies whose calls don't depend on each other's
+results:
+
+| Strategy | Parallelized by `max_concurrency`? |
+|---|---|
+| `PointwiseRanker` | Yes -- every candidate is scored independently |
+| `PairwiseRanker(method="allpairs")` | Yes -- every comparison is independent |
+| `PairwiseRanker(method="heapsort"/"bubblesort")` | No -- each comparison's outcome determines the next one |
+| `SetwiseRanker` (either method) | No -- same reason, n-ary |
+| `ListwiseRanker` | No -- each window's input is the previous window's output |
+
+For the non-parallelizable strategies, `max_concurrency` is accepted for
+constructor-signature consistency but genuinely does nothing -- that's
+documented on each class rather than silently ignored.
+
+```python
+# fast: dispatches all scoring calls in parallel, up to 5 at once
+PointwiseRanker(LLMConfig(model="gpt-4o-mini"))
+
+# more parallel, if your provider/plan can take it
+PointwiseRanker(LLMConfig(model="gpt-4o-mini"), max_concurrency=15)
+
+# fully sequential -- useful on a strict rate limit (e.g. a free tier)
+PointwiseRanker(LLMConfig(model="gpt-4o-mini"), max_concurrency=1)
+```
+
+If you're hitting rate limits (`429`s) on a free or low tier, lower
+`max_concurrency` rather than relying on retries alone -- the built-in
+retry/backoff in `llmranker.llm.call_llm` handles occasional transient
+errors, but it won't save you from a provider that's rejecting bursts of
+concurrent requests outright.
+
 ## Use case: hotel recommendation
 
 The flagship example lives in

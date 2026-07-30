@@ -63,3 +63,18 @@ def test_pairwise_unparseable_output_defaults_to_first_candidate(fake_llm):
 def test_pairwise_rejects_unknown_method():
     with pytest.raises(ValueError):
         PairwiseRanker(LLMConfig(model="gpt-4o-mini"), method="quicksort")
+
+
+@pytest.mark.parametrize("max_concurrency", [1, 5])
+def test_pairwise_allpairs_concurrency_matches_sequential(fake_llm, max_concurrency):
+    candidates = _shuffled_candidates()
+    rank_of = {c.text: int(c.id) for c in candidates}
+    fake_llm.responses = _ground_truth_responder(rank_of)
+
+    ranker = PairwiseRanker(
+        LLMConfig(model="gpt-4o-mini"), method="allpairs", max_concurrency=max_concurrency
+    )
+    result = ranker.rank("query", candidates)
+
+    assert [c.id for c in result] == ["1", "2", "3", "4", "5"]
+    assert ranker.total_calls == 10  # n*(n-1)/2 for n=5, same regardless of concurrency
