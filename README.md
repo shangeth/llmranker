@@ -299,10 +299,11 @@ and why.
 If `llmranker` itself is useful to you, please cite the repository:
 
 ```bibtex
-@software{rajaa_llmranker,
-  author = {Rajaa, Shangeth},
-  title = {{llmranker}: LLM ranking and reasoning algorithms for search and recommendation},
-  url = {https://github.com/shangeth/llmranker}
+@misc{rajaa_llmranker,
+  author       = {Rajaa, Shangeth},
+  title        = {{llmranker}: LLM ranking and reasoning algorithms for search and recommendation},
+  howpublished = {\url{https://github.com/shangeth/llmranker}},
+  note         = {GitHub repository}
 }
 ```
 
