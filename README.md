@@ -11,6 +11,7 @@ Ollama models, or any of the 100+ providers LiteLLM supports.
 [![PyPI](https://img.shields.io/pypi/v/llmranker.svg)](https://pypi.org/project/llmranker/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/shangeth/llmranker/blob/main/LICENSE)
 [![CI](https://github.com/shangeth/llmranker/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/shangeth/llmranker/actions/workflows/ci.yml)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shangeth/llmranker/blob/main/examples/quickstart.ipynb)
 
 ```python
 from llmranker import Candidate, LLMConfig, SetwiseRanker
@@ -78,6 +79,8 @@ docs](https://docs.litellm.ai/docs/providers) for the full list, including
 self-hosted/local options that need no key at all.
 
 ## Quickstart
+
+Prefer an interactive walkthrough? Open [`examples/quickstart.ipynb`](https://colab.research.google.com/github/shangeth/llmranker/blob/main/examples/quickstart.ipynb) in Colab.
 
 ```python
 from llmranker import Candidate, LLMConfig, PairwiseRanker
