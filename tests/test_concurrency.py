@@ -7,7 +7,7 @@ from llmranker.types import Candidate
 
 def test_call_many_preserves_order_despite_out_of_order_completion(fake_llm):
     """_call_many() must return responses in input order even when worker
-    threads finish in a different order -- callers zip() the result back up
+    threads finish in a different order; callers zip() the result back up
     against their original candidate/pair list and rely on that.
     """
     candidates = [Candidate(id=str(i), text=f"candidate-{i}") for i in range(5)]

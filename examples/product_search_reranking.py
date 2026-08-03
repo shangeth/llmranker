@@ -16,12 +16,24 @@ from llmranker import Candidate, LLMConfig, SetwiseRanker
 QUERY = "waterproof running shoes for wide feet, under $100"
 
 PRODUCTS = [
-    ("p1", "TrailGrip Wide Trail Runner - waterproof membrane, wide-fit last, $89.99. Built for muddy trail conditions."),
-    ("p2", "CityStride Runner - breathable mesh running shoe, standard fit, $74.99. Not water resistant."),
-    ("p3", "AquaBoot Hiking Boot - fully waterproof, wide fit available, $134.99. Built for hiking, not running."),
+    (
+        "p1",
+        "TrailGrip Wide Trail Runner - waterproof membrane, wide-fit last, $89.99. Built for muddy trail conditions.",
+    ),
+    (
+        "p2",
+        "CityStride Runner - breathable mesh running shoe, standard fit, $74.99. Not water resistant.",
+    ),
+    (
+        "p3",
+        "AquaBoot Hiking Boot - fully waterproof, wide fit available, $134.99. Built for hiking, not running.",
+    ),
     ("p4", "SpeedLite Racer - ultra-light racing flat, narrow fit, $110.00, no water resistance."),
     ("p5", "AllWeather Wide Runner - waterproof, extra-wide fit, road/trail hybrid sole, $95.00."),
-    ("p6", "ComfortWalk Wide - waterproof walking shoe (not designed for running), wide fit, $65.00."),
+    (
+        "p6",
+        "ComfortWalk Wide - waterproof walking shoe (not designed for running), wide fit, $65.00.",
+    ),
 ]
 
 candidates = [Candidate(id=pid, text=text) for pid, text in PRODUCTS]

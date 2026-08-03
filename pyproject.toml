@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "llmranker"
 version = "0.1.0"
-description = "A toolkit of LLM ranking and reasoning algorithms for search and recommendation"
+description = "LLM-based ranking and reasoning algorithms for search and recommendation"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"

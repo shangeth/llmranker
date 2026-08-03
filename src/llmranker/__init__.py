@@ -1,3 +1,5 @@
+from importlib.metadata import PackageNotFoundError, version
+
 from .benchmark import compare_rankers
 from .llm import LLMConfig, LLMResponse
 from .metrics import RankingMetrics
@@ -11,7 +13,11 @@ from .rankers import (
 )
 from .types import Candidate
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("llmranker")
+except PackageNotFoundError:
+    # Not installed (e.g. running from a source checkout with no build metadata).
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     "BaseRanker",

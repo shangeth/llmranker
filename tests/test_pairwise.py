@@ -86,9 +86,7 @@ def test_pairwise_debias_position_matches_unbiased_ground_truth(fake_llm):
     rank_of = {c.text: int(c.id) for c in candidates}
     fake_llm.responses = _ground_truth_responder(rank_of)
 
-    ranker = PairwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), method="allpairs", debias_position=True
-    )
+    ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), method="allpairs", debias_position=True)
     result = ranker.rank("query", candidates)
 
     assert [c.id for c in result] == ["1", "2", "3", "4", "5"]
@@ -102,7 +100,7 @@ def _always_b_responder(messages):
 
 
 def test_pairwise_debias_position_prevents_confidently_wrong_bias(fake_llm):
-    # `candidates` is NOT in true-relevance order -- it's just some input order.
+    # `candidates` is NOT in true-relevance order, it's just some input order.
     candidates = _shuffled_candidates()
 
     fake_llm.responses = _always_b_responder
@@ -110,7 +108,7 @@ def test_pairwise_debias_position_prevents_confidently_wrong_bias(fake_llm):
     biased_result = biased.rank("query", candidates)
     # Undebiased: a model that always answers "B" makes the later-indexed
     # candidate in every pair "win", which structurally reverses whatever
-    # order the candidates were passed in -- a confidently wrong result
+    # order the candidates were passed in: a confidently wrong result
     # driven entirely by position, not content.
     assert [c.id for c in biased_result] == [c.id for c in reversed(candidates)]
 

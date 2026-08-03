@@ -18,7 +18,7 @@ class ListwiseRanker(BaseRanker):
     window of candidates at once (RankGPT-style), sliding the window across
     the list and optionally repeating.
 
-    One LLM call handles `window_size` candidates at a time -- far fewer
+    One LLM call handles `window_size` candidates at a time, far fewer
     calls than pairwise/setwise for long lists, at the cost of asking the
     model to reason about more candidates per turn (accuracy tends to
     degrade as `window_size` grows).
@@ -34,7 +34,7 @@ class ListwiseRanker(BaseRanker):
         documents or small-context models). Off by default.
 
     Every window's call depends on the previous window's output, so this
-    strategy is inherently sequential -- `max_concurrency` has **no
+    strategy is inherently sequential: `max_concurrency` has **no
     effect** here. It's accepted for constructor-signature consistency with
     the other rankers only.
     """
@@ -70,9 +70,7 @@ class ListwiseRanker(BaseRanker):
         for rank, candidate in enumerate(window, start=1):
             text = candidate.text
             if self.max_tokens_per_candidate is not None:
-                text = truncate_to_tokens(
-                    text, self.config.model, self.max_tokens_per_candidate
-                )
+                text = truncate_to_tokens(text, self.config.model, self.max_tokens_per_candidate)
             messages.append({"role": "user", "content": f"[{rank}] {text}"})
             messages.append(
                 {"role": "assistant", "content": f"Received {self.item_label} [{rank}]."}

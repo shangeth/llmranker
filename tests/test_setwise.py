@@ -42,7 +42,7 @@ def test_setwise_finds_top_k_in_true_order(fake_llm, method):
 
 def test_setwise_insertion_costs_fewer_calls_than_heapsort_on_ordered_input(fake_llm):
     # A near-sorted prior order (a couple of items out of place) is exactly
-    # the case Setwise Insertion is designed for -- most later chunks should
+    # the case Setwise Insertion is designed for: most later chunks should
     # be discarded against the guard in a single call each, rather than
     # heapsort's full tree of comparisons.
     ranks = [1, 2, 4, 3, 5, 7, 6, 8, 9, 10]

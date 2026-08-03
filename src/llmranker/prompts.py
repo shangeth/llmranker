@@ -23,7 +23,7 @@ def extract_final_answer(text: str) -> str:
     """If a `FINAL ANSWER:` marker is present, return only the text after it
     (last occurrence, in case the marker text appears earlier by
     coincidence); otherwise return `text` unchanged. Safe to call
-    unconditionally -- a no-op when the marker isn't present, which also
+    unconditionally: a no-op when the marker isn't present, which also
     guards against a model volunteering explanatory text even when
     reasoning wasn't requested.
     """
@@ -112,9 +112,7 @@ def setwise_user_prompt(
     reasoning: bool = False,
 ) -> str:
     label = item_label.capitalize()
-    body = "\n\n".join(
-        f'{label} {characters[i]}: "{c.text}"' for i, c in enumerate(candidates)
-    )
+    body = "\n\n".join(f'{label} {characters[i]}: "{c.text}"' for i, c in enumerate(candidates))
     prompt = (
         f'Given a query "{query}", which of the following {item_label}s is the '
         f"most relevant one to the query?\n\n{body}"
@@ -193,9 +191,7 @@ def tourrank_group_user_prompt(
     reasoning: bool = False,
 ) -> str:
     label = item_label.capitalize()
-    body = "\n\n".join(
-        f'{label} {characters[i]}: "{c.text}"' for i, c in enumerate(candidates)
-    )
+    body = "\n\n".join(f'{label} {characters[i]}: "{c.text}"' for i, c in enumerate(candidates))
     prompt = (
         f'Given a query "{query}", select the {advance_count} most relevant '
         f"{item_label}s from the following {len(candidates)}:\n\n{body}"

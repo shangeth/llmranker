@@ -28,7 +28,11 @@ def _ground_truth_responder(rank_of):
 
 
 def test_listwise_compare_reorders_single_window(fake_llm):
-    window = [Candidate(id="x", text="rank-3"), Candidate(id="y", text="rank-1"), Candidate(id="z", text="rank-2")]
+    window = [
+        Candidate(id="x", text="rank-3"),
+        Candidate(id="y", text="rank-1"),
+        Candidate(id="z", text="rank-2"),
+    ]
     rank_of = {"rank-3": 3, "rank-1": 1, "rank-2": 2}
     fake_llm.responses = _ground_truth_responder(rank_of)
 

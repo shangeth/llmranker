@@ -19,7 +19,7 @@ class PointwiseRanker(BaseRanker):
     Cheapest strategy: exactly `len(candidates)` LLM calls, no comparisons
     between candidates. Because each score is produced in isolation it is
     the weakest at capturing *relative* preference between similar
-    candidates -- reach for pairwise/setwise/listwise when that matters more
+    candidates. Reach for pairwise/setwise/listwise when that matters more
     than cost.
 
     Every candidate's score is independent of every other's, so `rank()`

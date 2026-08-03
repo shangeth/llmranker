@@ -21,12 +21,12 @@ class PairwiseRanker(BaseRanker):
 
     `method`:
       - "heapsort": build a max-heap, pop the top `k`. O(n + k log n) comparisons,
-        run sequentially -- each comparison's outcome determines the next one,
+        run sequentially: each comparison's outcome determines the next one,
         so `max_concurrency` has no effect here.
       - "bubblesort": k bubble passes, each moving the best remaining candidate
         to the front. O(n * k) comparisons, also sequential for the same reason.
       - "allpairs": every candidate compared against every other once, ranked
-        by win count. O(n^2) comparisons -- most robust to individual
+        by win count. O(n^2) comparisons, most robust to individual
         comparison noise, and the only method here where comparisons are
         independent of each other, so it's fully parallelized by
         `max_concurrency` (see `BaseRanker`).
@@ -42,7 +42,7 @@ class PairwiseRanker(BaseRanker):
     b-as-A/a-as-B); the result is only trusted when both agree, otherwise
     the comparison is treated as too ambiguous to trust and defaults to `a`
     (the original first argument). This roughly **doubles** the LLM calls
-    for whichever comparisons it's applied to -- off by default.
+    for whichever comparisons it's applied to. Off by default.
     """
 
     def __init__(
@@ -163,9 +163,9 @@ class PairwiseRanker(BaseRanker):
             winners = [self._parse_label(r.text, a, b) for (a, b), r in zip(pairs, responses)]
         else:
             # Forward and backward calls for every pair are all mutually
-            # independent, so dispatch them together in one _call_many --
-            # doubles the call count but not the wall-clock time under
-            # concurrency.
+            # independent, so dispatch them together in one _call_many.
+            # This doubles the call count but not the wall-clock time
+            # under concurrency.
             forward_batches = [self._build_compare_messages(query, a, b) for a, b in pairs]
             backward_batches = [self._build_compare_messages(query, b, a) for a, b in pairs]
             responses = self._call_many(forward_batches + backward_batches)

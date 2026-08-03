@@ -22,7 +22,7 @@ def compare_rankers(
     quality, LLM usage, latency and estimated cost side by side.
 
     `true_ranking` is the ground-truth ordering of candidate ids, best to
-    worst -- see `RankingMetrics` for how it's used to score each ranker's
+    worst; see `RankingMetrics` for how it's used to score each ranker's
     predicted order.
     """
     metrics_calc = RankingMetrics()

@@ -1,15 +1,15 @@
 # llmranker
 
-**A toolkit of LLM ranking algorithms for search and recommendation --
-with reasoning on why each result is the right fit.** Currently includes
-pointwise, pairwise, listwise, setwise, and tournament-style (TourRank)
-ranking, with more strategies planned (see [`ROADMAP.md`](ROADMAP.md)),
+**LLM-based ranking and reasoning algorithms for search and
+recommendation.** Currently includes pointwise, pairwise, listwise,
+setwise, and tournament-style (TourRank) ranking, with more strategies
+planned (see [`ROADMAP.md`](https://github.com/shangeth/llmranker/blob/main/ROADMAP.md)),
 implemented on top of [LiteLLM](https://github.com/BerriAI/litellm) so the
 same code runs against OpenAI, Gemini, Anthropic, Azure, Bedrock, local
 Ollama models, or any of the 100+ providers LiteLLM supports.
 
 [![PyPI](https://img.shields.io/pypi/v/llmranker.svg)](https://pypi.org/project/llmranker/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/shangeth/llmranker/blob/main/LICENSE)
 [![CI](https://github.com/shangeth/llmranker/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/shangeth/llmranker/actions/workflows/ci.yml)
 
 ```python
@@ -31,11 +31,11 @@ print([c.id for c in result])  # ['3', '1', '2']
 
 Before you fine-tune a ranking model or build an embedding index, you can
 often just *ask* an LLM which candidate is more relevant to a query. This
-package implements the four ways of doing that described in
-[**"A Setwise Approach for Effective and Highly Efficient Zero-shot Ranking
-with Large Language Models"**](https://arxiv.org/abs/2310.09497) (Zhuang et
-al., 2023) -- plus a fifth, tournament-style paradigm from more recent
-research (see [`TourRankRanker`](#choosing-a-strategy) below):
+package is a toolkit of strategies for doing exactly that: scoring,
+comparing, sorting, or tournament-ranking a list of candidates with any
+LLM, no training required. Each strategy is grounded in published IR/NLP
+research, cited per-strategy below and in full under [Citing the
+underlying research](#citing-the-underlying-research):
 
 | Strategy | How it works | LLM calls | Notes |
 |---|---|---|---|
@@ -57,12 +57,12 @@ You give it a query and a list of candidates, it gives you a ranked list.
   constraints that keyword search can't express and embedding search tends
   to blur together.
 - **Cheap at the scale that matters for reranking.** You're not ranking
-  your whole catalog with an LLM -- you're reranking the top-k (dozens, not
+  your whole catalog with an LLM; you're reranking the top-k (dozens, not
   millions) that a cheap first-pass retrieval already narrowed down.
 
-See [`examples/hotel_recommendation/`](examples/hotel_recommendation/) for
+See [`examples/hotel_recommendation/`](https://github.com/shangeth/llmranker/tree/main/examples/hotel_recommendation) for
 the full worked example this README's numbers come from, and
-[`examples/`](examples/) for RAG document reranking, product search, and
+[`examples/`](https://github.com/shangeth/llmranker/tree/main/examples) for RAG document reranking, product search, and
 multi-provider comparisons.
 
 ## Install
@@ -71,7 +71,7 @@ multi-provider comparisons.
 pip install llmranker
 ```
 
-Set whichever provider's API key you're using as an environment variable --
+Set whichever provider's API key you're using as an environment variable:
 LiteLLM reads the standard ones automatically (`OPENAI_API_KEY`,
 `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, ...). See [LiteLLM's provider
 docs](https://docs.litellm.ai/docs/providers) for the full list, including
@@ -106,15 +106,14 @@ LLMConfig(model="bedrock/anthropic.claude-3-sonnet-20240229-v1:0")  # AWS Bedroc
 LLMConfig(model="ollama/llama3")                   # local, via Ollama
 ```
 
-See [`examples/multi_provider_swap.py`](examples/multi_provider_swap.py).
+See [`examples/multi_provider_swap.py`](https://github.com/shangeth/llmranker/blob/main/examples/multi_provider_swap.py).
 
 ## Choosing a strategy
 
 Rough guidance, in order of what to reach for first:
 
-- Start with **setwise** (`num_child=4-8`, `method="heapsort"`) -- the best
-  cost/quality tradeoff for most use cases, and what this package is named
-  after.
+- Start with **setwise** (`num_child=4-8`, `method="heapsort"`), the best
+  cost/quality tradeoff for most use cases.
 - If you want the simplest possible mental model (and don't mind more LLM
   calls), use **pairwise**.
 - If latency matters more than call count and your candidate list is small
@@ -124,14 +123,14 @@ Rough guidance, in order of what to reach for first:
   than just a ranking, or when `n` is large and you can't afford
   comparisons at all.
 - Use **TourRank** when the order `candidates` arrives in is unreliable (or
-  you don't have one) and you want a result that doesn't depend on it --
-  it's more expensive than setwise, but explicitly designed to be robust to
+  you don't have one) and you want a result that doesn't depend on it. It's
+  more expensive than setwise, but explicitly designed to be robust to
   input order, unlike listwise's sliding window.
 
 ## Concurrency
 
 Every ranker takes a `max_concurrency` param (default `5`) that controls
-how many LLM calls run at once via a thread pool -- calls are parallel by
+how many LLM calls run at once via a thread pool. Calls are parallel by
 default, and `max_concurrency=1` forces fully sequential behavior.
 
 It only speeds up strategies whose calls don't depend on each other's
@@ -139,15 +138,15 @@ results:
 
 | Strategy | Parallelized by `max_concurrency`? |
 |---|---|
-| `PointwiseRanker` | Yes -- every candidate is scored independently |
-| `PairwiseRanker(method="allpairs")` | Yes -- every comparison is independent |
-| `PairwiseRanker(method="heapsort"/"bubblesort")` | No -- each comparison's outcome determines the next one |
-| `SetwiseRanker` (any method, incl. `"insertion"`) | No -- same reason, n-ary |
-| `ListwiseRanker` | No -- each window's input is the previous window's output |
-| `TourRankRanker` | Yes, within a stage -- every group's LLM call is independent of the others; stages and tournament runs themselves stay sequential |
+| `PointwiseRanker` | Yes: every candidate is scored independently |
+| `PairwiseRanker(method="allpairs")` | Yes: every comparison is independent |
+| `PairwiseRanker(method="heapsort"/"bubblesort")` | No: each comparison's outcome determines the next one |
+| `SetwiseRanker` (any method, incl. `"insertion"`) | No: same reason, n-ary |
+| `ListwiseRanker` | No: each window's input is the previous window's output |
+| `TourRankRanker` | Yes, within a stage: every group's LLM call is independent of the others; stages and tournament runs themselves stay sequential |
 
 For the non-parallelizable strategies, `max_concurrency` is accepted for
-constructor-signature consistency but genuinely does nothing -- that's
+constructor-signature consistency but genuinely does nothing; that's
 documented on each class rather than silently ignored.
 
 ```python
@@ -157,12 +156,12 @@ PointwiseRanker(LLMConfig(model="gpt-4o-mini"))
 # more parallel, if your provider/plan can take it
 PointwiseRanker(LLMConfig(model="gpt-4o-mini"), max_concurrency=15)
 
-# fully sequential -- useful on a strict rate limit (e.g. a free tier)
+# fully sequential, useful on a strict rate limit (e.g. a free tier)
 PointwiseRanker(LLMConfig(model="gpt-4o-mini"), max_concurrency=1)
 ```
 
 If you're hitting rate limits (`429`s) on a free or low tier, lower
-`max_concurrency` rather than relying on retries alone -- the built-in
+`max_concurrency` rather than relying on retries alone. The built-in
 retry/backoff in `llmranker.llm.call_llm` handles occasional transient
 errors, but it won't save you from a provider that's rejecting bursts of
 concurrent requests outright.
@@ -170,13 +169,13 @@ concurrent requests outright.
 ## Reducing position bias
 
 LLMs have a documented bias toward whichever candidate happens to be
-listed first (or second, model-dependent) in a pairwise prompt --
-independent of actual content. `PairwiseRanker` has a `debias_position`
-flag that runs each comparison both ways (swapping which candidate is
-"Item A" vs "Item B") and only trusts the result when both orderings
-agree; on disagreement it falls back to a safe default rather than
-reporting a confidently wrong answer. This roughly **doubles** the LLM
-calls for whichever comparisons it's applied to, so it's opt-in:
+listed first (or second, model-dependent) in a pairwise prompt, independent
+of actual content. `PairwiseRanker` has a `debias_position` flag that runs
+each comparison both ways (swapping which candidate is "Item A" vs
+"Item B") and only trusts the result when both orderings agree; on
+disagreement it falls back to a safe default rather than reporting a
+confidently wrong answer. This roughly **doubles** the LLM calls for
+whichever comparisons it's applied to, so it's opt-in:
 
 ```python
 ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), debias_position=True)
@@ -185,12 +184,12 @@ ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), debias_position=True)
 ## Reasoning
 
 Every ranker accepts `reasoning=True`, which asks the model to think step
-by step before giving its final answer -- shown to help across a 2025 wave
+by step before giving its final answer, shown to help across a 2025 wave
 of reasoning-reranker papers (Rank1, Rank-R1, and others). This is a
-*prompting* technique, not a switch to a dedicated reasoning model -- it
+*prompting* technique, not a switch to a dedicated reasoning model; it
 works with any chat model. (If you want to route to an actual
 reasoning-capable model instead, that's just a model string, e.g.
-`LLMConfig(model="o1-mini")` -- orthogonal to this flag, and the two can be
+`LLMConfig(model="o1-mini")`, orthogonal to this flag, and the two can be
 combined.)
 
 ```python
@@ -198,7 +197,7 @@ ranker = SetwiseRanker(LLMConfig(model="gpt-4o-mini"), reasoning=True)
 ```
 
 `reasoning=True` doesn't change how many calls are made, only prompt and
-completion content -- expect longer, more expensive completions. A low
+completion content: expect longer, more expensive completions. A low
 default `max_tokens` on some providers can truncate a reasoning chain
 before it reaches the final answer; raise it via
 `LLMConfig(extra_kwargs={"max_tokens": ...})` if you see that happen.
@@ -206,11 +205,11 @@ before it reaches the final answer; raise it via
 ## Use case: hotel recommendation
 
 The flagship example lives in
-[`examples/hotel_recommendation/`](examples/hotel_recommendation/). It
+[`examples/hotel_recommendation/`](https://github.com/shangeth/llmranker/tree/main/examples/hotel_recommendation). It
 reranks 7 hotels against natural-language guest preferences like *"family
 friendly hotel with kids, close to historical places, not right on the
-beach"* -- exactly the kind of compositional, subjective query that trips
-up keyword and embedding search but an LLM reading full descriptions
+beach."* This is exactly the kind of compositional, subjective query that
+trips up keyword and embedding search but an LLM reading full descriptions
 handles naturally.
 
 ```bash
@@ -224,22 +223,22 @@ estimated cost, and latency using `llmranker.compare_rankers`.
 
 ## More use cases
 
-- [`examples/rag_document_reranking.py`](examples/rag_document_reranking.py)
-  -- rerank RAG retrieval results before they go into a prompt, so context
+- [`examples/rag_document_reranking.py`](https://github.com/shangeth/llmranker/blob/main/examples/rag_document_reranking.py):
+  rerank RAG retrieval results before they go into a prompt, so context
   budget goes to passages that actually answer the question instead of
   merely-related near-duplicates.
-- [`examples/product_search_reranking.py`](examples/product_search_reranking.py)
-  -- e-commerce search reranking against multi-constraint natural-language
+- [`examples/product_search_reranking.py`](https://github.com/shangeth/llmranker/blob/main/examples/product_search_reranking.py):
+  e-commerce search reranking against multi-constraint natural-language
   intent (price, fit, use case).
 - Other good fits: job/candidate matching, content and media
-  recommendation, support ticket triage, lead scoring -- anywhere you have
+  recommendation, support ticket triage, lead scoring: anywhere you have
   a short list of candidates and a query or profile to rank them against.
 
 ## Customizing for your domain
 
-Every ranker accepts an `item_label` (used in the default prompts -- "hotel",
-"product", "document", ...) and an optional `system_prompt` override if you
-want full control over the wording:
+Every ranker accepts an `item_label` (used in the default prompts, e.g.
+"hotel", "product", "document", ...) and an optional `system_prompt`
+override if you want full control over the wording:
 
 ```python
 ranker = SetwiseRanker(
@@ -263,7 +262,7 @@ report = compare_rankers([ranker_a, ranker_b], query, candidates, true_ranking)
 ```
 
 `true_ranking` is a ground-truth ordering of candidate ids (best to worst),
-if you have one -- e.g. from human labels or a held-out click log.
+if you have one, e.g. from human labels or a held-out click log.
 
 ## API reference
 
@@ -274,6 +273,7 @@ if you have one -- e.g. from human labels or a held-out click log.
 | `llmranker.rankers` | `PointwiseRanker`, `PairwiseRanker`, `SetwiseRanker`, `ListwiseRanker`, `TourRankRanker` |
 | `llmranker.metrics` | `RankingMetrics` (NDCG, MRR, MAE, Spearman, Kendall's Tau) |
 | `llmranker.benchmark` | `compare_rankers` |
+| `llmranker.prompts` | Default prompt templates, plus `extract_final_answer`/`reasoning_suffix` for the `reasoning` flag |
 
 Every ranker implements `rank(query, candidates) -> list[Candidate]` and
 tracks `total_calls` / `total_prompt_tokens` / `total_completion_tokens`
@@ -288,10 +288,10 @@ pip install -e ".[dev]"
 pytest
 ```
 
-Tests run entirely offline against a fake LiteLLM backend -- no API key
-needed to contribute.
+Tests run entirely offline against a fake LiteLLM backend, so no API key
+is needed to contribute.
 
-See [`ROADMAP.md`](ROADMAP.md) for what's researched but not built yet,
+See [`ROADMAP.md`](https://github.com/shangeth/llmranker/blob/main/ROADMAP.md) for what's researched but not built yet,
 and why.
 
 ## Citing this package
@@ -299,17 +299,16 @@ and why.
 If `llmranker` itself is useful to you, please cite the repository:
 
 ```bibtex
-@misc{rajaa_llmranker,
-  author       = {Rajaa, Shangeth},
-  title        = {{llmranker}: LLM ranking and reasoning algorithms for search and recommendation},
-  howpublished = {\url{https://github.com/shangeth/llmranker}},
-  note         = {GitHub repository}
+@misc{Rajaa_llmranker,
+author = {Rajaa, Shangeth},
+title = {{llmranker: LLM-based ranking and reasoning algorithms for search and recommendation}},
+url = {https://github.com/shangeth/llmranker}
 }
 ```
 
 For a citation pinned to the exact version/commit you used, use GitHub's
 "Cite this repository" button in the sidebar (APA or BibTeX) instead of the
-snippet above -- it reads [`CITATION.cff`](CITATION.cff) live off whatever's
+snippet above: it reads [`CITATION.cff`](https://github.com/shangeth/llmranker/blob/main/CITATION.cff) live off whatever's
 checked out, so it's always accurate without anyone needing to hand-update
 a version number in this README.
 
@@ -343,4 +342,4 @@ the paper(s) behind it:
 
 ## License
 
-MIT -- see [LICENSE](LICENSE).
+MIT, see [LICENSE](https://github.com/shangeth/llmranker/blob/main/LICENSE).

@@ -36,8 +36,7 @@ class RankingMetrics:
         def dcg(ranking: Sequence[str]) -> float:
             ranking = ranking[:k] if k is not None else ranking
             return sum(
-                relevance.get(item_id, 0) / np.log2(i + 2)
-                for i, item_id in enumerate(ranking)
+                relevance.get(item_id, 0) / np.log2(i + 2) for i, item_id in enumerate(ranking)
             )
 
         ideal = dcg(true_ranking)
@@ -70,9 +69,7 @@ class RankingMetrics:
         true_pos = cls._positions(true_ranking)
         pred_pos = cls._positions(predicted_ranking)
         ids = list(true_pos)
-        corr, _ = spearmanr(
-            [true_pos[i] for i in ids], [pred_pos.get(i, len(ids)) for i in ids]
-        )
+        corr, _ = spearmanr([true_pos[i] for i in ids], [pred_pos.get(i, len(ids)) for i in ids])
         return corr
 
     @classmethod
@@ -80,9 +77,7 @@ class RankingMetrics:
         true_pos = cls._positions(true_ranking)
         pred_pos = cls._positions(predicted_ranking)
         ids = list(true_pos)
-        tau, _ = kendalltau(
-            [true_pos[i] for i in ids], [pred_pos.get(i, len(ids)) for i in ids]
-        )
+        tau, _ = kendalltau([true_pos[i] for i in ids], [pred_pos.get(i, len(ids)) for i in ids])
         return tau
 
     def get_metrics(

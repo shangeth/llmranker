@@ -17,7 +17,7 @@ logger = logging.getLogger("llmranker")
 litellm.suppress_debug_info = True
 
 # Transient, worth retrying. Auth/bad-request errors are not in this list on
-# purpose -- retrying a request that will never succeed just burns quota.
+# purpose: retrying a request that will never succeed just burns quota.
 RETRYABLE_EXCEPTIONS = (
     litellm.exceptions.RateLimitError,
     litellm.exceptions.APIConnectionError,
@@ -66,7 +66,7 @@ def call_llm(messages: list[dict[str, str]], config: LLMConfig) -> LLMResponse:
         wait=wait_exponential(multiplier=1, min=1, max=20),
         retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
         before_sleep=lambda retry_state: logger.warning(
-            "LLM call failed (attempt %d/%d): %s -- retrying",
+            "LLM call failed (attempt %d/%d): %s, retrying",
             retry_state.attempt_number,
             config.max_retries,
             retry_state.outcome.exception(),
@@ -109,10 +109,7 @@ def truncate_to_tokens(text: str, model: str, max_tokens: int) -> str:
         ratio = max_tokens / token_count
         approx_words = max(1, int(len(words) * ratio))
         truncated = " ".join(words[:approx_words])
-        while (
-            litellm.token_counter(model=model, text=truncated) > max_tokens
-            and approx_words > 1
-        ):
+        while litellm.token_counter(model=model, text=truncated) > max_tokens and approx_words > 1:
             approx_words -= 1
             truncated = " ".join(words[:approx_words])
         return truncated
@@ -121,9 +118,7 @@ def truncate_to_tokens(text: str, model: str, max_tokens: int) -> str:
         return " ".join(text.split()[:max_tokens])
 
 
-def estimate_cost(
-    model: str, prompt_tokens: int, completion_tokens: int
-) -> float | None:
+def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
     """Estimate USD cost for the given token usage.
 
     Returns None if LiteLLM has no pricing data for `model` (e.g. a local

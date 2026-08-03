@@ -13,13 +13,13 @@ from .base import BaseRanker
 class TourRankRanker(BaseRanker):
     """Tournament-style ranking (Chen et al., WWW'25, arXiv:2406.11678).
 
-    Candidates are split into small groups -- like a sports tournament's
-    group stage -- and an LLM selects the top `advance_per_group` of each
+    Candidates are split into small groups (like a sports tournament's
+    group stage) and an LLM selects the top `advance_per_group` of each
     group to advance, earning +1 point each. Survivors are regrouped and
     the process repeats for `num_stages`; the whole thing is one
     *tournament*. `num_tournaments` independent tournaments are run (fresh
     random grouping/shuffling each time) and points are summed across all
-    of them. A candidate's final `score` is that total point count -- how
+    of them. A candidate's final `score` is that total point count: how
     many stages, across how many tournament runs, it survived. This is a
     genuine calibrated score (like `PointwiseRanker.score()`), not a
     synthetic rank position.
@@ -29,7 +29,7 @@ class TourRankRanker(BaseRanker):
     and then **shuffled** within the group before prompting (mitigates
     position bias in the prompt itself). Combined with averaging over
     several independent tournament runs, TourRank is explicitly designed
-    to be **robust to the initial order of `candidates`** -- unlike
+    to be **robust to the initial order of `candidates`**, unlike
     `ListwiseRanker`'s sliding window, which is quite sensitive to it.
 
     Groups within a stage are independent of each other, so they're
@@ -39,7 +39,7 @@ class TourRankRanker(BaseRanker):
 
     `k`: optional, purely truncates the *output* to the top `k` by points.
     Unlike `PairwiseRanker`/`SetwiseRanker` heapsort, this does **not**
-    reduce LLM calls -- every group in every stage of every tournament
+    reduce LLM calls: every group in every stage of every tournament
     still runs, since the points system needs the full tournament to be
     meaningful.
 
@@ -113,9 +113,7 @@ class TourRankRanker(BaseRanker):
         response = self._call(self._build_group_messages(query, group))
         return self._parse_group_selection(response.text, group)
 
-    def _make_groups(
-        self, active: list[Candidate], rng: random.Random
-    ) -> list[list[Candidate]]:
+    def _make_groups(self, active: list[Candidate], rng: random.Random) -> list[list[Candidate]]:
         num_groups = math.ceil(len(active) / self.group_size)
         groups: list[list[Candidate]] = [[] for _ in range(num_groups)]
         for i, candidate in enumerate(active):

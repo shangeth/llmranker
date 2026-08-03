@@ -13,19 +13,19 @@ class BaseRanker(ABC):
     Subclasses implement `rank()`. `_call()` is the single choke point every
     subclass routes its LLM calls through, so usage stats (`total_calls`,
     `total_prompt_tokens`, `total_completion_tokens`) stay accurate no matter
-    which strategy is used -- these feed `llmranker.benchmark.compare_rankers`.
+    which strategy is used; these feed `llmranker.benchmark.compare_rankers`.
 
     `max_concurrency` controls how many LLM calls `_call_many()` runs at
     once. It only affects strategies whose calls are independent of each
-    other (PointwiseRanker, PairwiseRanker's "allpairs" method) -- see each
+    other (PointwiseRanker, PairwiseRanker's "allpairs" method); see each
     class's docstring for whether it applies. Set to 1 to force fully
     sequential calls (e.g. to stay under a strict rate limit).
 
     `reasoning` asks the model to think step by step before giving its
-    final answer (a prompting technique, not a switch to a dedicated
-    reasoning model -- works with any chat model; use a reasoning-capable
+    final answer (a prompting technique that works with any chat model,
+    not a switch to a dedicated reasoning model; use a reasoning-capable
     `LLMConfig.model` for that instead). It doesn't change how many calls
-    are made, only prompt/completion content -- expect longer, more
+    are made, only prompt/completion content; expect longer, more
     expensive completions. Off by default.
     """
 

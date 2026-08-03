@@ -17,15 +17,33 @@ from llmranker import Candidate, LLMConfig, PairwiseRanker
 QUERY = "What's the cancellation policy if I need to reschedule within 24 hours of check-in?"
 
 # Pretend these came back from a vector store as the top-6 nearest neighbors
-# for the query above -- all "about" hotel bookings, only a couple actually
+# for the query above, all "about" hotel bookings, only a couple actually
 # answer the question.
 RETRIEVED_CHUNKS = [
-    ("chunk-1", "Guests can modify room preferences (bed type, floor, view) free of charge up to 48 hours before arrival by contacting the front desk."),
-    ("chunk-2", "Cancellations made more than 7 days before check-in receive a full refund. Cancellations within 24 hours of check-in are non-refundable, but may be rescheduled once at no fee within the same calendar year."),
-    ("chunk-3", "Our loyalty program awards 1 point per dollar spent, redeemable for free nights, room upgrades, and late checkout."),
-    ("chunk-4", "Check-in begins at 3:00 PM and check-out is at 11:00 AM; early check-in and late check-out are subject to availability."),
-    ("chunk-5", "For bookings made through a third-party site, cancellation and rescheduling policies are governed by that site's terms, not ours."),
-    ("chunk-6", "Pets under 25 lbs are welcome for a one-time $75 cleaning fee; service animals are always welcome at no charge."),
+    (
+        "chunk-1",
+        "Guests can modify room preferences (bed type, floor, view) free of charge up to 48 hours before arrival by contacting the front desk.",
+    ),
+    (
+        "chunk-2",
+        "Cancellations made more than 7 days before check-in receive a full refund. Cancellations within 24 hours of check-in are non-refundable, but may be rescheduled once at no fee within the same calendar year.",
+    ),
+    (
+        "chunk-3",
+        "Our loyalty program awards 1 point per dollar spent, redeemable for free nights, room upgrades, and late checkout.",
+    ),
+    (
+        "chunk-4",
+        "Check-in begins at 3:00 PM and check-out is at 11:00 AM; early check-in and late check-out are subject to availability.",
+    ),
+    (
+        "chunk-5",
+        "For bookings made through a third-party site, cancellation and rescheduling policies are governed by that site's terms, not ours.",
+    ),
+    (
+        "chunk-6",
+        "Pets under 25 lbs are welcome for a one-time $75 cleaning fee; service animals are always welcome at no charge.",
+    ),
 ]
 
 candidates = [Candidate(id=cid, text=text) for cid, text in RETRIEVED_CHUNKS]

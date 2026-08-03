@@ -19,8 +19,8 @@ class SetwiseRanker(BaseRanker):
 
     Compared to PairwiseRanker, grouping `num_child` candidates per LLM call
     cuts the number of calls roughly by a factor of `num_child`, at the cost
-    of a longer prompt per call -- the core trade-off introduced by the
-    Setwise paper (arXiv:2310.09497) this package is named after.
+    of a longer prompt per call: the core trade-off introduced by the
+    Setwise paper (arXiv:2310.09497), which this class implements.
 
     `method`:
       - "heapsort": build a `num_child`-ary max-heap, pop the top `k`.
@@ -36,11 +36,11 @@ class SetwiseRanker(BaseRanker):
         position. This is much cheaper than heapsort/bubblesort when
         `candidates` already arrives in a reasonable order (e.g. from an
         upstream retriever/embedding search) since most chunks get
-        discarded in a single call -- it degrades toward more calls (not
+        discarded in a single call. It degrades toward more calls (not
         incorrect results) on an unordered input, so the benefit depends on
         `candidates` carrying a meaningful prior order.
 
-    All methods are sequential comparison sorts -- each comparison's
+    All methods are sequential comparison sorts: each comparison's
     outcome determines what gets compared next, so unlike PointwiseRanker
     or PairwiseRanker's "allpairs" method, `max_concurrency` has **no
     effect** here. It's accepted for constructor-signature consistency with

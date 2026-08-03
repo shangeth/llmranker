@@ -18,7 +18,7 @@ It's a good stress test for LLM-based ranking specifically because:
   new inventory, a new market, or a one-off internal tool. Zero-shot LLM
   ranking needs none.
 - **Candidate sets are small.** A search page shows dozens of hotels, not
-  millions -- exactly the regime where `O(n)` to `O(n log n)` LLM calls per
+  millions: exactly the regime where `O(n)` to `O(n log n)` LLM calls per
   query is affordable.
 
 ## Run it
@@ -31,9 +31,9 @@ python run.py
 
 `run.py` does two things:
 
-1. **Quickstart** -- ranks 7 hotels against a natural-language query with
+1. **Quickstart**: ranks 7 hotels against a natural-language query with
    `SetwiseRanker` and prints the order plus LLM call/token counts.
-2. **Strategy comparison** -- runs `PointwiseRanker`, `PairwiseRanker`,
+2. **Strategy comparison**: runs `PointwiseRanker`, `PairwiseRanker`,
    `SetwiseRanker`, `ListwiseRanker`, and `TourRankRanker` on the same query
    and reports ranking quality (NDCG, MRR, Spearman, Kendall's Tau against a
    hand-labeled ground truth), LLM calls, tokens, estimated cost, and
@@ -41,4 +41,4 @@ python run.py
 
 Swap `MODEL` at the top of `run.py` to any [LiteLLM model string](https://docs.litellm.ai/docs/providers)
 to run the same comparison against Gemini, Claude, a local Ollama model, etc.
-with no other code changes -- see `examples/multi_provider_swap.py`.
+with no other code changes; see `examples/multi_provider_swap.py`.

@@ -1,4 +1,4 @@
-"""Same query, same candidates, same ranker code -- only the model string
+"""Same query, same candidates, same ranker code; only the model string
 changes. This is the entire point of building llmranker on top of LiteLLM:
 one interface, any provider.
 
@@ -11,7 +11,7 @@ Run whichever providers you have API keys for, e.g.:
 
 from llmranker import Candidate, LLMConfig, SetwiseRanker
 
-# Each entry is a LiteLLM model string -- see https://docs.litellm.ai/docs/providers
+# Each entry is a LiteLLM model string (see https://docs.litellm.ai/docs/providers)
 MODELS_TO_TRY = [
     "gpt-4o-mini",  # OpenAI
     "gemini/gemini-1.5-flash",  # Google Gemini
@@ -20,9 +20,13 @@ MODELS_TO_TRY = [
 ]
 
 CANDIDATES = [
-    Candidate(id="a", text="A budget-friendly hostel in the city center, walking distance to museums."),
+    Candidate(
+        id="a", text="A budget-friendly hostel in the city center, walking distance to museums."
+    ),
     Candidate(id="b", text="A five-star beachfront resort with an adults-only pool and spa."),
-    Candidate(id="c", text="A family-run guesthouse near the old town, kid-friendly, no beach access."),
+    Candidate(
+        id="c", text="A family-run guesthouse near the old town, kid-friendly, no beach access."
+    ),
 ]
 
 QUERY = "affordable place to stay near historical sites, good for families"
