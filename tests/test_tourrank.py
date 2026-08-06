@@ -121,3 +121,52 @@ def test_parse_group_selection_falls_back_entirely_on_unparseable_output():
 def test_tourrank_rejects_invalid_config(kwargs):
     with pytest.raises(ValueError):
         TourRankRanker(LLMConfig(model="gpt-4o-mini"), **kwargs)
+
+
+def test_tourrank_num_samples_is_ignored_with_warning(fake_llm, caplog):
+    candidates = _shuffled_candidates(n=4)
+    rank_of = {c.text: int(c.id) for c in candidates}
+    fake_llm.responses = _ground_truth_responder(rank_of, 2)
+
+    ranker = TourRankRanker(
+        LLMConfig(model="gpt-4o-mini"),
+        group_size=4,
+        advance_per_group=2,
+        num_stages=1,
+        num_tournaments=1,
+        num_samples=3,
+        seed=1,
+    )
+    with caplog.at_level("WARNING"):
+        ranker.rank("query", candidates)
+
+    assert any("num_samples" in r.message for r in caplog.records)
+
+
+def test_tourrank_structured_output_parses_json_selection(fake_llm):
+    fake_llm.responses = ['{"selected": ["A", "C"]}']
+    group = [Candidate(id=str(i), text=f"hotel {i}") for i in range(4)]
+    ranker = TourRankRanker(
+        LLMConfig(model="gpt-4o-mini"),
+        group_size=4,
+        advance_per_group=2,
+        structured_output=True,
+    )
+
+    selected = ranker.select_group("query", group)
+    assert {c.id for c in selected} == {"0", "2"}
+    assert fake_llm.calls[0]["response_format"]["type"] == "json_schema"
+
+
+def test_tourrank_structured_output_falls_back_to_regex_on_malformed_json(fake_llm):
+    fake_llm.responses = ["not json, going with A and C"]
+    group = [Candidate(id=str(i), text=f"hotel {i}") for i in range(4)]
+    ranker = TourRankRanker(
+        LLMConfig(model="gpt-4o-mini"),
+        group_size=4,
+        advance_per_group=2,
+        structured_output=True,
+    )
+
+    selected = ranker.select_group("query", group)
+    assert {c.id for c in selected} == {"0", "2"}

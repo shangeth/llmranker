@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
 
+from .. import structured
 from ..llm import LLMConfig
 from ..prompts import extract_final_answer, pairwise_system_prompt, pairwise_user_prompt
 from ..types import Candidate
@@ -12,14 +14,14 @@ logger = logging.getLogger("llmranker")
 
 _LABEL_RE = re.compile(r"\b([AB])\b")
 
-_METHODS = ("heapsort", "bubblesort", "allpairs")
+_STRATEGIES = ("heapsort", "bubblesort", "allpairs")
 
 
 class PairwiseRanker(BaseRanker):
     """Sorts candidates via repeated pairwise LLM comparisons ("which is more
     relevant, A or B?").
 
-    `method`:
+    `strategy`:
       - "heapsort": build a max-heap, pop the top `k`. O(n + k log n) comparisons,
         run sequentially: each comparison's outcome determines the next one,
         so `max_concurrency` has no effect here.
@@ -27,7 +29,7 @@ class PairwiseRanker(BaseRanker):
         to the front. O(n * k) comparisons, also sequential for the same reason.
       - "allpairs": every candidate compared against every other once, ranked
         by win count. O(n^2) comparisons, most robust to individual
-        comparison noise, and the only method here where comparisons are
+        comparison noise, and the only strategy here where comparisons are
         independent of each other, so it's fully parallelized by
         `max_concurrency` (see `BaseRanker`).
 
@@ -36,40 +38,66 @@ class PairwiseRanker(BaseRanker):
     (higher = more relevant) since comparisons only ever establish relative
     order, not an absolute value.
 
-    `debias_position`: LLMs have a documented bias toward whichever
+    `num_samples > 1`: LLMs have a documented bias toward whichever
     candidate is listed first (or second, model-dependent) in a pairwise
-    prompt. When True, every comparison is run both ways (a-as-A/b-as-B and
-    b-as-A/a-as-B); the result is only trusted when both agree, otherwise
-    the comparison is treated as too ambiguous to trust and defaults to `a`
-    (the original first argument). This roughly **doubles** the LLM calls
-    for whichever comparisons it's applied to. Off by default.
+    prompt. Each sample randomly assigns the two candidates to slots A/B
+    before asking, and the comparison is decided by majority vote across
+    samples instead of trusting a single call; this cancels position bias
+    as a side effect, since it's no longer systematically tied to a fixed
+    slot. Costs `num_samples` calls per comparison instead of 1. `seed`
+    makes the position randomization reproducible across a `rank()` call.
     """
 
     def __init__(
         self,
         config: LLMConfig,
-        method: str = "heapsort",
+        strategy: str = "heapsort",
         k: int | None = None,
         item_label: str = "item",
         system_prompt: str | None = None,
         name: str | None = None,
         max_concurrency: int = 5,
         reasoning: bool = False,
-        debias_position: bool = False,
+        num_samples: int = 1,
+        structured_output: bool = False,
+        seed: int | None = None,
     ):
-        super().__init__(config, item_label, system_prompt, name, max_concurrency, reasoning)
-        if method not in _METHODS:
-            raise ValueError(f"Unknown method {method!r}, expected one of {_METHODS}")
-        self.method = method
+        super().__init__(
+            config,
+            item_label,
+            system_prompt,
+            name,
+            max_concurrency,
+            reasoning,
+            num_samples,
+            structured_output,
+        )
+        if strategy not in _STRATEGIES:
+            raise ValueError(f"Unknown strategy {strategy!r}, expected one of {_STRATEGIES}")
+        self.strategy = strategy
         self.k = k
-        self.debias_position = debias_position
+        self.seed = seed
+        self._rng = random.Random(seed)
 
     def _build_compare_messages(self, query: str, a: Candidate, b: Candidate) -> list[dict]:
         system = self.system_prompt_override or pairwise_system_prompt(self.item_label)
-        user = pairwise_user_prompt(query, [a, b], self.item_label, self.reasoning)
+        user = pairwise_user_prompt(
+            query,
+            [a, b],
+            self.item_label,
+            self.reasoning,
+            self.structured_output,
+        )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
+    def _response_format(self) -> dict | None:
+        return structured.pairwise_schema() if self.structured_output else None
+
     def _parse_label(self, text: str, a: Candidate, b: Candidate) -> Candidate:
+        if self.structured_output:
+            choice = structured.parse_pairwise_json(text)
+            if choice is not None:
+                return a if choice == "A" else b
         text = extract_final_answer(text)
         match = _LABEL_RE.search(text.strip())
         if match is None:
@@ -80,16 +108,30 @@ class PairwiseRanker(BaseRanker):
     def compare(self, query: str, a: Candidate, b: Candidate) -> Candidate:
         """Return whichever of `a`/`b` the LLM judges more relevant to `query`.
 
-        See `debias_position` on the class for the bidirectional-agreement
-        behavior when enabled.
+        See `num_samples` on the class for the randomized-position,
+        majority-vote behavior when it's set above 1.
         """
-        forward = self._call(self._build_compare_messages(query, a, b))
-        forward_winner = self._parse_label(forward.text, a, b)
-        if not self.debias_position:
-            return forward_winner
-        backward = self._call(self._build_compare_messages(query, b, a))
-        backward_winner = self._parse_label(backward.text, b, a)
-        return forward_winner if forward_winner is backward_winner else a
+        n = self.num_samples
+        response_format = self._response_format()
+        if n <= 1:
+            forward = self._call(self._build_compare_messages(query, a, b), response_format)
+            return self._parse_label(forward.text, a, b)
+
+        orders: list[tuple[Candidate, Candidate]] = []
+        batches = []
+        for _ in range(n):
+            if self._rng.random() < 0.5:
+                orders.append((a, b))
+                batches.append(self._build_compare_messages(query, a, b))
+            else:
+                orders.append((b, a))
+                batches.append(self._build_compare_messages(query, b, a))
+        responses = self._call_many(batches, response_format)
+        votes = {a.id: 0, b.id: 0}
+        for (x, y), r in zip(orders, responses):
+            winner = self._parse_label(r.text, x, y)
+            votes[winner.id] += 1
+        return a if votes[a.id] >= votes[b.id] else b
 
     def _better(self, query: str, a: Candidate, b: Candidate) -> bool:
         return self.compare(query, a, b) is a
@@ -99,9 +141,9 @@ class PairwiseRanker(BaseRanker):
         arr = list(candidates)
         k = len(arr) if self.k is None else min(self.k, len(arr))
 
-        if self.method == "heapsort":
+        if self.strategy == "heapsort":
             top = self._heapsort(query, arr, k)
-        elif self.method == "bubblesort":
+        elif self.strategy == "bubblesort":
             top = self._bubblesort(query, arr, k)
         else:
             top = self._allpairs(query, arr, k)
@@ -156,26 +198,37 @@ class PairwiseRanker(BaseRanker):
 
     def _allpairs(self, query: str, arr: list[Candidate], k: int) -> list[Candidate]:
         pairs = [(arr[i], arr[j]) for i in range(len(arr)) for j in range(i + 1, len(arr))]
+        n = self.num_samples
+        response_format = self._response_format()
 
-        if not self.debias_position:
+        if n <= 1:
             batches = [self._build_compare_messages(query, a, b) for a, b in pairs]
-            responses = self._call_many(batches)
+            responses = self._call_many(batches, response_format)
             winners = [self._parse_label(r.text, a, b) for (a, b), r in zip(pairs, responses)]
         else:
-            # Forward and backward calls for every pair are all mutually
-            # independent, so dispatch them together in one _call_many.
-            # This doubles the call count but not the wall-clock time
-            # under concurrency.
-            forward_batches = [self._build_compare_messages(query, a, b) for a, b in pairs]
-            backward_batches = [self._build_compare_messages(query, b, a) for a, b in pairs]
-            responses = self._call_many(forward_batches + backward_batches)
-            forward_responses = responses[: len(pairs)]
-            backward_responses = responses[len(pairs) :]
+            # Every pair's n samples are all mutually independent, so
+            # dispatch them all together in one _call_many. This scales the
+            # call count by n but not the wall-clock time under concurrency.
+            orders: list[tuple[Candidate, Candidate]] = []
+            batches = []
+            for a, b in pairs:
+                for _ in range(n):
+                    if self._rng.random() < 0.5:
+                        orders.append((a, b))
+                        batches.append(self._build_compare_messages(query, a, b))
+                    else:
+                        orders.append((b, a))
+                        batches.append(self._build_compare_messages(query, b, a))
+            responses = self._call_many(batches, response_format)
             winners = []
-            for (a, b), fr, br in zip(pairs, forward_responses, backward_responses):
-                fw = self._parse_label(fr.text, a, b)
-                bw = self._parse_label(br.text, b, a)
-                winners.append(fw if fw is bw else a)
+            for i, (a, b) in enumerate(pairs):
+                chunk_orders = orders[i * n : (i + 1) * n]
+                chunk_responses = responses[i * n : (i + 1) * n]
+                votes = {a.id: 0, b.id: 0}
+                for (x, y), r in zip(chunk_orders, chunk_responses):
+                    winner = self._parse_label(r.text, x, y)
+                    votes[winner.id] += 1
+                winners.append(a if votes[a.id] >= votes[b.id] else b)
 
         wins = {c.id: 0 for c in arr}
         for winner in winners:

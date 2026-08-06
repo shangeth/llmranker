@@ -7,12 +7,11 @@ import pandas as pd
 
 from .llm import estimate_cost
 from .metrics import RankingMetrics
-from .rankers.base import BaseRanker
-from .types import Candidate
+from .types import Candidate, Ranker
 
 
 def compare_rankers(
-    rankers: list[BaseRanker],
+    rankers: list[Ranker],
     query: str,
     candidates: list[Candidate],
     true_ranking: Sequence[str],

@@ -50,7 +50,7 @@ candidates = [Candidate(id=cid, text=text) for cid, text in RETRIEVED_CHUNKS]
 
 ranker = PairwiseRanker(
     LLMConfig(model="gpt-4o-mini"),
-    method="heapsort",
+    strategy="heapsort",
     k=3,
     item_label="document",
 )

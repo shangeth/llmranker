@@ -53,7 +53,9 @@ def test_listwise_reasoning_ignores_stray_numbers_before_final_answer(fake_llm):
     )
     fake_llm.responses = [text]
 
-    ranker = ListwiseRanker(LLMConfig(model="gpt-4o-mini"), window_size=3, reasoning=True)
+    ranker = ListwiseRanker(
+        LLMConfig(model="gpt-4o-mini"), window_size=3, reasoning=True
+    )
     reordered = ranker.compare("query", window)
 
     assert [c.id for c in reordered] == ["2", "0", "1"]
@@ -92,3 +94,49 @@ def test_listwise_rejects_invalid_config():
         ListwiseRanker(LLMConfig(model="gpt-4o-mini"), window_size=4, step_size=5)
     with pytest.raises(ValueError):
         ListwiseRanker(LLMConfig(model="gpt-4o-mini"), window_size=1)
+
+
+def test_listwise_num_samples_borda_counts_across_samples(fake_llm):
+    window = [
+        Candidate(id="p", text="item-p"),
+        Candidate(id="q", text="item-q"),
+        Candidate(id="r", text="item-r"),
+    ]
+    # Two of three samples put p first; Borda points should favor p even
+    # though one sample disagrees.
+    fake_llm.responses = ["[1] > [2] > [3]", "[2] > [1] > [3]", "[1] > [2] > [3]"]
+
+    ranker = ListwiseRanker(
+        LLMConfig(model="gpt-4o-mini"), window_size=3, num_samples=3
+    )
+    reordered = ranker.compare("query", window)
+
+    assert [c.id for c in reordered] == ["p", "q", "r"]
+    assert ranker.total_calls == 3
+
+
+def test_listwise_structured_output_parses_json_ranking(fake_llm):
+    window = [Candidate(id=str(i), text=f"item-{i}") for i in range(3)]
+    fake_llm.responses = ['{"ranking": [3, 1, 2]}']
+    ranker = ListwiseRanker(
+        LLMConfig(model="gpt-4o-mini"),
+        window_size=3,
+        structured_output=True,
+    )
+
+    reordered = ranker.compare("query", window)
+    assert [c.id for c in reordered] == ["2", "0", "1"]
+    assert fake_llm.calls[0]["response_format"]["type"] == "json_schema"
+
+
+def test_listwise_structured_output_falls_back_to_regex_on_malformed_json(fake_llm):
+    window = [Candidate(id=str(i), text=f"item-{i}") for i in range(3)]
+    fake_llm.responses = ["not json but [3] > [1] > [2]"]
+    ranker = ListwiseRanker(
+        LLMConfig(model="gpt-4o-mini"),
+        window_size=3,
+        structured_output=True,
+    )
+
+    reordered = ranker.compare("query", window)
+    assert [c.id for c in reordered] == ["2", "0", "1"]

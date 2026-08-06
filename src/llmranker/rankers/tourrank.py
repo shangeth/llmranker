@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
 import math
 import random
 import re
 
+from .. import structured
 from ..llm import LLMConfig
 from ..prompts import extract_final_answer, tourrank_group_user_prompt, tourrank_system_prompt
 from ..types import Candidate
 from .base import BaseRanker
+
+logger = logging.getLogger("llmranker")
 
 
 class TourRankRanker(BaseRanker):
@@ -45,6 +49,12 @@ class TourRankRanker(BaseRanker):
 
     Ties in final points are broken by each candidate's original position
     in `candidates` (stable sort).
+
+    `num_samples` is ignored here: `num_tournaments` is TourRank's own
+    repeated-sampling-and-aggregation mechanism, and stacking `num_samples`
+    on top of it would just compound two sampling schemes in a way that's
+    hard to reason about. A warning is logged if it's set above 1; use
+    `num_tournaments` instead.
     """
 
     def __init__(
@@ -60,9 +70,20 @@ class TourRankRanker(BaseRanker):
         name: str | None = None,
         max_concurrency: int = 5,
         reasoning: bool = False,
+        num_samples: int = 1,
+        structured_output: bool = False,
         seed: int | None = None,
     ):
-        super().__init__(config, item_label, system_prompt, name, max_concurrency, reasoning)
+        super().__init__(
+            config,
+            item_label,
+            system_prompt,
+            name,
+            max_concurrency,
+            reasoning,
+            num_samples,
+            structured_output,
+        )
         if group_size < 2:
             raise ValueError("group_size must be >= 2")
         if advance_per_group >= group_size:
@@ -76,17 +97,34 @@ class TourRankRanker(BaseRanker):
         self.k = k
         self.seed = seed
         self.characters = [chr(ord("A") + i) for i in range(group_size)]
+        self._warned_num_samples = False
 
     def _build_group_messages(self, query: str, group: list[Candidate]) -> list[dict]:
         labels = self.characters[: len(group)]
         system = self.system_prompt_override or tourrank_system_prompt(self.item_label)
         user = tourrank_group_user_prompt(
-            query, group, labels, self.advance_per_group, self.item_label, self.reasoning
+            query,
+            group,
+            labels,
+            self.advance_per_group,
+            self.item_label,
+            self.reasoning,
+            self.structured_output,
         )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
+    def _response_format(self, group: list[Candidate]) -> dict | None:
+        if not self.structured_output:
+            return None
+        labels = self.characters[: len(group)]
+        return structured.tourrank_schema(labels, self.advance_per_group)
+
     def _parse_group_selection(self, text: str, group: list[Candidate]) -> list[Candidate]:
         labels = self.characters[: len(group)]
+        if self.structured_output:
+            selected = structured.parse_tourrank_json(text, labels)
+            if selected is not None and len(selected) == self.advance_per_group:
+                return [group[labels.index(label)] for label in selected]
         label_re = re.compile(r"\b(" + "|".join(labels) + r")\b")
         text = extract_final_answer(text)
 
@@ -110,7 +148,8 @@ class TourRankRanker(BaseRanker):
     def select_group(self, query: str, group: list[Candidate]) -> list[Candidate]:
         """Return the `advance_per_group` most relevant of `group` (order
         within the returned list isn't meaningful, only membership is)."""
-        response = self._call(self._build_group_messages(query, group))
+        messages = self._build_group_messages(query, group)
+        response = self._call(messages, self._response_format(group))
         return self._parse_group_selection(response.text, group)
 
     def _make_groups(self, active: list[Candidate], rng: random.Random) -> list[list[Candidate]]:
@@ -143,13 +182,22 @@ class TourRankRanker(BaseRanker):
                     points[c.id] += 1
 
             if real_groups:
-                batches = [self._build_group_messages(query, g) for g in real_groups]
-                responses = self._call_many(batches)
-                for group, response in zip(real_groups, responses):
-                    selected = self._parse_group_selection(response.text, group)
-                    survivors.extend(selected)
-                    for c in selected:
-                        points[c.id] += 1
+                # Grouped by size (usually one size, plus a smaller
+                # remainder group) because structured_output's schema
+                # depends on the group's label count, and _call_many takes
+                # one response_format for a whole batch.
+                by_size: dict[int, list[list[Candidate]]] = {}
+                for g in real_groups:
+                    by_size.setdefault(len(g), []).append(g)
+                for groups_of_size in by_size.values():
+                    batches = [self._build_group_messages(query, g) for g in groups_of_size]
+                    response_format = self._response_format(groups_of_size[0])
+                    responses = self._call_many(batches, response_format)
+                    for group, response in zip(groups_of_size, responses):
+                        selected = self._parse_group_selection(response.text, group)
+                        survivors.extend(selected)
+                        for c in selected:
+                            points[c.id] += 1
 
             active = survivors
 
@@ -157,6 +205,13 @@ class TourRankRanker(BaseRanker):
 
     def rank(self, query: str, candidates: list[Candidate]) -> list[Candidate]:
         self._reset_stats()
+        if self.num_samples > 1 and not self._warned_num_samples:
+            logger.warning(
+                "num_samples=%d is ignored on TourRankRanker: "
+                "num_tournaments is its own repeated-sampling mechanism.",
+                self.num_samples,
+            )
+            self._warned_num_samples = True
         rng = random.Random(self.seed)
         total_points = {c.id: 0 for c in candidates}
 

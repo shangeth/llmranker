@@ -113,7 +113,7 @@ TRUE_RANKING = [
 
 def quickstart() -> None:
     ranker = SetwiseRanker(
-        LLMConfig(model=MODEL), num_child=4, method="heapsort", k=5, item_label="hotel"
+        LLMConfig(model=MODEL), num_child=4, strategy="heapsort", k=5, item_label="hotel"
     )
     result = ranker.rank(QUERY, CANDIDATES)
 
@@ -128,12 +128,12 @@ def compare_all_strategies() -> None:
     rankers = [
         PointwiseRanker(LLMConfig(model=MODEL), item_label="hotel", name="pointwise"),
         PairwiseRanker(
-            LLMConfig(model=MODEL), method="heapsort", item_label="hotel", name="pairwise-heapsort"
+            LLMConfig(model=MODEL), strategy="heapsort", item_label="hotel", name="pairwise-heapsort"
         ),
         SetwiseRanker(
             LLMConfig(model=MODEL),
             num_child=4,
-            method="heapsort",
+            strategy="heapsort",
             item_label="hotel",
             name="setwise-heapsort",
         ),

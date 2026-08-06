@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
+
+from .llm import LLMConfig
 
 
 @dataclass
@@ -18,3 +20,21 @@ class Candidate:
     text: str
     score: float | None = None
     metadata: dict[str, Any] | None = None
+
+
+@runtime_checkable
+class Ranker(Protocol):
+    """The structural contract `llmranker.benchmark.compare_rankers` (and
+    anything else generic over rankers) relies on. Every `BaseRanker`
+    subclass satisfies this already; `CascadeRanker` satisfies it without
+    subclassing `BaseRanker`, since it wraps two rankers rather than owning
+    a single `LLMConfig` itself.
+    """
+
+    name: str
+    config: LLMConfig
+    total_calls: int
+    total_prompt_tokens: int
+    total_completion_tokens: int
+
+    def rank(self, query: str, candidates: list[Candidate]) -> list[Candidate]: ...

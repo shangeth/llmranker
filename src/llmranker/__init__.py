@@ -5,13 +5,14 @@ from .llm import LLMConfig, LLMResponse
 from .metrics import RankingMetrics
 from .rankers import (
     BaseRanker,
+    CascadeRanker,
     ListwiseRanker,
     PairwiseRanker,
     PointwiseRanker,
     SetwiseRanker,
     TourRankRanker,
 )
-from .types import Candidate
+from .types import Candidate, Ranker
 
 try:
     __version__ = version("llmranker")
@@ -22,11 +23,13 @@ except PackageNotFoundError:
 __all__ = [
     "BaseRanker",
     "Candidate",
+    "CascadeRanker",
     "LLMConfig",
     "LLMResponse",
     "ListwiseRanker",
     "PairwiseRanker",
     "PointwiseRanker",
+    "Ranker",
     "RankingMetrics",
     "SetwiseRanker",
     "TourRankRanker",

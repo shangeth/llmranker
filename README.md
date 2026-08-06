@@ -41,7 +41,7 @@ underlying research](#citing-the-underlying-research):
 | Strategy | How it works | LLM calls | Notes |
 |---|---|---|---|
 | **Pointwise** | Score each candidate independently (0-10) | `O(n)` | Cheapest, but ignores relative preference between candidates |
-| **Pairwise** | Repeatedly ask "A or B?", sort via heapsort/bubblesort/allpairs | `O(n log n)` to `O(n²)` | Simple, robust comparisons; optional bidirectional bias-checking |
+| **Pairwise** | Repeatedly ask "A or B?", sort via heapsort/bubblesort/allpairs | `O(n log n)` to `O(n²)` | Simple, robust comparisons; optional self-consistency bias-checking |
 | **Setwise** | Ask "which of these `k` is best?", sort via `k`-ary heapsort/bubblesort/insertion | `O(n log n / log k)` | Fewer calls than pairwise for the same sort, longer prompts |
 | **Listwise** | Ask the LLM to output a full ranking of a sliding window at once | `O(n / step)` | Fewest calls, but degrades as window size grows |
 | **TourRank** | Group candidates like a sports tournament, LLM picks winners per group, repeat over several stages and tournament runs, sum points | More calls, ensembled over multiple runs | Most robust to candidate input order; see [TourRank paper](https://arxiv.org/abs/2406.11678) |
@@ -85,7 +85,7 @@ Prefer an interactive walkthrough? Open [`examples/quickstart.ipynb`](https://co
 ```python
 from llmranker import Candidate, LLMConfig, PairwiseRanker
 
-ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), method="heapsort", k=10)
+ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), strategy="heapsort", k=10)
 
 candidates = [Candidate(id=str(i), text=doc) for i, doc in enumerate(my_documents)]
 result = ranker.rank(query="my search query", candidates=candidates)
@@ -115,7 +115,7 @@ See [`examples/multi_provider_swap.py`](https://github.com/shangeth/llmranker/bl
 
 Rough guidance, in order of what to reach for first:
 
-- Start with **setwise** (`num_child=4-8`, `method="heapsort"`), the best
+- Start with **setwise** (`num_child=4-8`, `strategy="heapsort"`), the best
   cost/quality tradeoff for most use cases.
 - If you want the simplest possible mental model (and don't mind more LLM
   calls), use **pairwise**.
@@ -129,6 +129,10 @@ Rough guidance, in order of what to reach for first:
   you don't have one) and you want a result that doesn't depend on it. It's
   more expensive than setwise, but explicitly designed to be robust to
   input order, unlike listwise's sliding window.
+- If cost is the constraint and your candidate list is long, don't run an
+  expensive strategy over everything: cascade a cheap ranker (pointwise) to
+  narrow the field, then an expensive one (setwise) to carefully re-rank
+  just the survivors. See [Cascading](#cascading-cheap-then-expensive).
 
 ## Concurrency
 
@@ -142,9 +146,9 @@ results:
 | Strategy | Parallelized by `max_concurrency`? |
 |---|---|
 | `PointwiseRanker` | Yes: every candidate is scored independently |
-| `PairwiseRanker(method="allpairs")` | Yes: every comparison is independent |
-| `PairwiseRanker(method="heapsort"/"bubblesort")` | No: each comparison's outcome determines the next one |
-| `SetwiseRanker` (any method, incl. `"insertion"`) | No: same reason, n-ary |
+| `PairwiseRanker(strategy="allpairs")` | Yes: every comparison is independent |
+| `PairwiseRanker(strategy="heapsort"/"bubblesort")` | No: each comparison's outcome determines the next one |
+| `SetwiseRanker` (any strategy, incl. `"insertion"`) | No: same reason, n-ary |
 | `ListwiseRanker` | No: each window's input is the previous window's output |
 | `TourRankRanker` | Yes, within a stage: every group's LLM call is independent of the others; stages and tournament runs themselves stay sequential |
 
@@ -169,41 +173,149 @@ retry/backoff in `llmranker.llm.call_llm` handles occasional transient
 errors, but it won't save you from a provider that's rejecting bursts of
 concurrent requests outright.
 
-## Reducing position bias
+## Quality: reasoning, self-consistency, structured output
 
-LLMs have a documented bias toward whichever candidate happens to be
-listed first (or second, model-dependent) in a pairwise prompt, independent
-of actual content. `PairwiseRanker` has a `debias_position` flag that runs
-each comparison both ways (swapping which candidate is "Item A" vs
-"Item B") and only trusts the result when both orderings agree; on
-disagreement it falls back to a safe default rather than reporting a
-confidently wrong answer. This roughly **doubles** the LLM calls for
-whichever comparisons it's applied to, so it's opt-in:
-
-```python
-ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), debias_position=True)
-```
-
-## Reasoning
-
-Every ranker accepts `reasoning=True`, which asks the model to think step
-by step before giving its final answer, shown to help across a 2025 wave
-of reasoning-reranker papers (Rank1, Rank-R1, and others). This is a
-*prompting* technique, not a switch to a dedicated reasoning model; it
-works with any chat model. (If you want to route to an actual
-reasoning-capable model instead, that's just a model string, e.g.
-`LLMConfig(model="o1-mini")`, orthogonal to this flag, and the two can be
-combined.)
+How hard a ranker works to get a reliable judgment is controlled by three
+params on every ranker, kept separate from the `LLMConfig` that controls
+which model it's talking to: `reasoning`, `num_samples`, and
+`structured_output`.
 
 ```python
 ranker = SetwiseRanker(LLMConfig(model="gpt-4o-mini"), reasoning=True)
 ```
 
-`reasoning=True` doesn't change how many calls are made, only prompt and
+### Reasoning
+
+`reasoning=True` asks the model to think step by step before giving its
+final answer, shown to help across a 2025 wave of reasoning-reranker
+papers (Rank1, Rank-R1, and others). This is a *prompting* technique, not
+a switch to a dedicated reasoning model; it works with any chat model. (If
+you want to route to an actual reasoning-capable model instead, that's
+just a model string, e.g. `LLMConfig(model="o1-mini")`, orthogonal to this
+flag.) It doesn't change how many calls are made, only prompt and
 completion content: expect longer, more expensive completions. A low
 default `max_tokens` on some providers can truncate a reasoning chain
 before it reaches the final answer; raise it via
 `LLMConfig(extra_kwargs={"max_tokens": ...})` if you see that happen.
+
+### Reducing position bias with `num_samples`
+
+LLMs have a documented bias toward whichever candidate happens to be
+listed first (or second, model-dependent) in a pairwise/setwise prompt,
+independent of actual content. `num_samples` repeats each judgment that
+many times and combines the results (mean for pointwise scores, majority
+vote for pairwise/setwise choices, a Borda-style merge for listwise
+rankings) instead of trusting a single call. On `PairwiseRanker` and
+`SetwiseRanker`, each sample also randomly reassigns which candidate lands
+on which label before asking, which cancels position bias as a side
+effect: it's no longer tied to a fixed slot, just noise the majority vote
+averages out.
+
+```python
+ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), num_samples=5)
+```
+
+This costs `num_samples` calls per judgment instead of 1, dispatched in
+parallel via the same `max_concurrency` every ranker already uses, so it
+adds spend rather than wall-clock time. `num_samples` only helps at
+`LLMConfig(temperature=...)` above `0`: at the default `temperature=0.0`
+every repeat returns the same answer, so `PointwiseRanker` logs a warning
+if you raise `num_samples` without also raising `temperature`.
+`TourRankRanker` has its own repeated-sampling mechanism
+(`num_tournaments`) and ignores `num_samples`.
+
+### Structured output
+
+`structured_output=True` uses LiteLLM's normalized JSON-schema
+`response_format` instead of regex-parsing free text, for providers that
+support it:
+
+```python
+ranker = SetwiseRanker(LLMConfig(model="gpt-4o-mini"), structured_output=True)
+```
+
+If a model still returns malformed JSON despite the schema, parsing falls
+back to the same regex parser used when `structured_output` is off, rather
+than raising. `reasoning` and `structured_output` can't both be enabled at
+once: reasoning needs free text ending in a final-answer marker, while
+strict JSON-schema mode needs the entire completion to be the JSON
+payload, leaving no room for reasoning text.
+
+## Multi-criteria scoring
+
+`PointwiseRanker` can score named sub-criteria separately instead of one
+holistic judgment, then combine them — useful for compositional queries
+("family friendly, near historical sites, affordable") where you want to
+know *why* a candidate scored the way it did, or want explicit control
+over which constraint matters most, rather than leaving that blend to
+whatever the model implicitly does with a single score. Pass a `criteria`
+dict or `"auto"`:
+
+```python
+# weighted sum: you name the criteria and their relative weight
+# (weights don't need to sum to 1, they're normalized internally)
+ranker = PointwiseRanker(
+    LLMConfig(model="gpt-4o-mini"),
+    criteria={"price_fit": 0.5, "location_fit": 0.3, "family_friendly": 0.2},
+)
+
+# priority-hierarchical: "high" mathematically dominates any possible
+# combination of "medium"/"low", so a candidate can't compensate for
+# failing a high-priority criterion by scoring well on lower ones
+ranker = PointwiseRanker(
+    LLMConfig(model="gpt-4o-mini"),
+    criteria={"family_friendly": "high", "price_fit": "medium", "location_fit": "low"},
+)
+
+# auto: the model extracts the criteria from the query itself, combined
+# with equal weight, so there are no criteria names to maintain per
+# domain, at the cost of not choosing them yourself
+ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), criteria="auto")
+```
+
+Off by default (`criteria=None`), identical behavior to plain holistic
+scoring. Costs exactly the same as holistic scoring — one call per
+candidate either way, since every named criterion is scored together in a
+single response — except `"auto"` mode, which adds exactly one extra call
+per `rank()` (not per candidate) to extract the criteria first; if
+extraction produces nothing parseable, it falls back to holistic scoring
+for that call rather than raising. `rank()`'s output candidates carry the
+breakdown in `Candidate.metadata["criteria_scores"]` (merged with any
+metadata already on the input candidate), so you can see per-criterion
+scores, not just the combined one; `score()` keeps returning a plain
+`float` and re-extracts on every call in `"auto"` mode, so prefer `rank()`
+when scoring multiple candidates against the same query that way.
+
+Composes normally with `reasoning` and `num_samples`; the existing
+`reasoning`+`structured_output` restriction still applies, inherited
+rather than a new rule.
+
+## Cascading (cheap-then-expensive)
+
+`CascadeRanker` composes two already-configured rankers instead of being a
+new ranking algorithm itself: a cheap one narrows a long candidate list
+down, then an expensive one carefully re-ranks just the survivors
+(FrugalGPT-style cascading). Each stage keeps its own model and
+reasoning/`num_samples`/`structured_output` settings, exactly as if it
+were used standalone; `CascadeRanker` only owns how many survive the
+first stage:
+
+```python
+from llmranker import CascadeRanker, LLMConfig, PointwiseRanker, SetwiseRanker
+
+ranker = CascadeRanker(
+    narrow=PointwiseRanker(LLMConfig(model="gpt-4o-mini")),
+    refine=SetwiseRanker(LLMConfig(model="gpt-4o"), num_child=4),
+    narrow_to=10,
+)
+result = ranker.rank(query="my search query", candidates=candidates)
+```
+
+`ranker.total_calls` / `total_prompt_tokens` / `total_completion_tokens`
+sum both stages, and `ranker.config` reports the `refine` stage's config
+(whichever model actually produced the final ranking) — it plugs into
+`compare_rankers` (see [Evaluation & benchmarking](#evaluation--benchmarking))
+just like any other ranker.
 
 ## Use case: hotel recommendation
 
@@ -271,12 +383,14 @@ if you have one, e.g. from human labels or a held-out click log.
 
 | Module | Contents |
 |---|---|
-| `llmranker.types` | `Candidate(id, text, score, metadata)` |
+| `llmranker.types` | `Candidate(id, text, score, metadata)`, `Ranker` (structural protocol) |
 | `llmranker.llm` | `LLMConfig`, `call_llm`, `truncate_to_tokens`, `estimate_cost` |
-| `llmranker.rankers` | `PointwiseRanker`, `PairwiseRanker`, `SetwiseRanker`, `ListwiseRanker`, `TourRankRanker` |
+| `llmranker.rankers` | `PointwiseRanker`, `PairwiseRanker`, `SetwiseRanker`, `ListwiseRanker`, `TourRankRanker`, `CascadeRanker`; each takes `reasoning`, `num_samples`, `structured_output` |
 | `llmranker.metrics` | `RankingMetrics` (NDCG, MRR, MAE, Spearman, Kendall's Tau) |
 | `llmranker.benchmark` | `compare_rankers` |
 | `llmranker.prompts` | Default prompt templates, plus `extract_final_answer`/`reasoning_suffix` for the `reasoning` flag |
+| `llmranker.structured` | JSON-schema builders/parsers backing `structured_output` |
+| `llmranker.criteria` | `resolve_weights` and text parsers backing `PointwiseRanker`'s `criteria` param |
 
 Every ranker implements `rank(query, candidates) -> list[Candidate]` and
 tracks `total_calls` / `total_prompt_tokens` / `total_completion_tokens`

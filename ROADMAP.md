@@ -1,12 +1,16 @@
 # Roadmap
 
 `llmranker` is a general-purpose toolkit of LLM-based ranking and search
-methods: `PointwiseRanker`, `PairwiseRanker` (heapsort/bubblesort/allpairs,
-with optional position-debiasing), `SetwiseRanker`
-(heapsort/bubblesort/insertion), `ListwiseRanker`, and `TourRankRanker`
-today, plus an optional `reasoning` mode across all of them. Individual
-strategies are grounded in published research, cited in each ranker's
-docstring and in the README.
+methods: `PointwiseRanker`, `PairwiseRanker` (heapsort/bubblesort/allpairs),
+`SetwiseRanker` (heapsort/bubblesort/insertion), `ListwiseRanker`, and
+`TourRankRanker` today, plus `CascadeRanker` for composing a cheap ranker
+with an expensive one. Every ranker takes `reasoning`, self-consistency
+via `num_samples`, and `structured_output` params controlling how hard it
+works to get a reliable judgment; `PointwiseRanker` additionally takes a
+`criteria` param for named-sub-criteria scoring (weighted sum,
+priority-hierarchical, or LLM-auto-extracted). Individual strategies are
+grounded in published research, cited in each ranker's docstring and in
+the README.
 
 This document tracks what's *not* built yet, found during research into
 what else is out there, and why each item isn't in yet. If you want to pick
@@ -16,51 +20,18 @@ scratch.
 ## Near-term: configuration on existing rankers
 
 These extend classes that already exist: no new ranker class needed, same
-shape as how `reasoning` and `debias_position` were added.
+shape as how `reasoning`, `num_samples`, and `structured_output` were
+added as flat params shared by every ranker's constructor.
 
-- **Self-consistency / repeated sampling (`num_samples`)**: the strongest
-  finding so far. Repeat each judgment `N` times with reshuffled candidate
-  positions and aggregate (mean for pointwise scores, majority vote for
-  pairwise/setwise labels) instead of asking once. A Thomson Reuters Labs
-  study found up to 40% AUC-PR improvement from 15x repeated batched
-  pointwise scoring versus a single pass, and since repeats run in
-  parallel through the existing `_call_many`, it costs extra calls/spend
-  but not extra wall-clock time. This would **generalize, and could
-  replace, the current binary `debias_position` flag**: a
-  "randomized-direction oracle" (assign candidates to random slots per
-  comparison rather than always querying both directions) converts
-  systematic position bias into zero-mean noise that repeated sampling
-  already cancels out, without paying `debias_position=True`'s current
-  2x-calls cost every time.
-- **Structured/schema-constrained output**: an optional mode using
-  LiteLLM's normalized `response_format` JSON-schema support (works across
-  several providers) instead of regex-parsing free text. Would harden
-  every existing ranker's response parsing without changing any algorithm.
 - **Global-context pointwise scoring**: `PointwiseRanker` currently scores
   each candidate in total isolation, its most-cited weakness. A cheap
   first-pass ranking fed back in as calibration context before individual
   scoring ("Post-Aggregated Global Context", arXiv:2506.10859) could fix
   this directly. Exact mechanics need a full read of the paper before
   implementing.
-- **Multi-criteria/weighted scoring**: score named sub-criteria separately
-  (e.g. price fit, location fit, family-friendliness) instead of one
-  holistic judgment, then combine with weights. Cuts across rankers rather
-  than living on one; more new code than the other items here (a new
-  prompt template shape, a combination step) but still a scoring-scheme
-  variation layered on existing comparison/sort logic, not a new sort
-  algorithm. Fits the recommendation use case particularly well.
 
 ## New ranking paradigm candidates
 
-- **`CascadeRanker`** (cheap-then-expensive tiered ranking): a wrapper
-  that composes two *existing* rankers rather than a new prompting
-  algorithm: a fast/cheap ranker (e.g. pointwise) narrows the field, a
-  slower/pricier ranker (e.g. setwise) does a thorough re-rank of just the
-  survivors. Well-established pattern (FrugalGPT-style LLM cascading,
-  arXiv:2305.05176); no existing open-source library doing this
-  specifically for LLM rerankers as far as this research found. Lower
-  implementation risk than a genuinely new algorithm, since it's
-  orchestration of things that already work, not new prompt research.
 - **JointRank** (arXiv:2506.22262): claims to rank a large candidate set
   in a single pass via block-partitioning + aggregation, potentially a
   genuine 6th paradigm alongside pointwise/pairwise/listwise/setwise/

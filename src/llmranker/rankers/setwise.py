@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
 
+from .. import structured
 from ..llm import LLMConfig
 from ..prompts import extract_final_answer, setwise_system_prompt, setwise_user_prompt
 from ..types import Candidate
@@ -10,7 +12,7 @@ from .base import BaseRanker
 
 logger = logging.getLogger("llmranker")
 
-_METHODS = ("heapsort", "bubblesort", "insertion")
+_STRATEGIES = ("heapsort", "bubblesort", "insertion")
 
 
 class SetwiseRanker(BaseRanker):
@@ -22,7 +24,7 @@ class SetwiseRanker(BaseRanker):
     of a longer prompt per call: the core trade-off introduced by the
     Setwise paper (arXiv:2310.09497), which this class implements.
 
-    `method`:
+    `strategy`:
       - "heapsort": build a `num_child`-ary max-heap, pop the top `k`.
       - "bubblesort": k passes, each sliding the best remaining candidate to
         the front of the unranked region, `num_child` at a time.
@@ -40,28 +42,48 @@ class SetwiseRanker(BaseRanker):
         incorrect results) on an unordered input, so the benefit depends on
         `candidates` carrying a meaningful prior order.
 
-    All methods are sequential comparison sorts: each comparison's
+    All strategies are sequential comparison sorts: each comparison's
     outcome determines what gets compared next, so unlike PointwiseRanker
-    or PairwiseRanker's "allpairs" method, `max_concurrency` has **no
+    or PairwiseRanker's "allpairs" strategy, `max_concurrency` has **no
     effect** here. It's accepted for constructor-signature consistency with
     the other rankers only.
+
+    `num_samples > 1`: each group comparison reshuffles the
+    candidate-to-label assignment per sample and decides the winner by
+    majority vote across samples instead of trusting a single call, which
+    cancels position bias (e.g. a tendency to favor whichever candidate
+    lands on label "A") as a side effect. Costs `num_samples` calls per
+    comparison instead of 1. `seed` makes the shuffling reproducible across
+    a `rank()` call.
     """
 
     def __init__(
         self,
         config: LLMConfig,
         num_child: int = 3,
-        method: str = "heapsort",
+        strategy: str = "heapsort",
         k: int | None = None,
         item_label: str = "item",
         system_prompt: str | None = None,
         name: str | None = None,
         max_concurrency: int = 5,
         reasoning: bool = False,
+        num_samples: int = 1,
+        structured_output: bool = False,
+        seed: int | None = None,
     ):
-        super().__init__(config, item_label, system_prompt, name, max_concurrency, reasoning)
-        if method not in _METHODS:
-            raise ValueError(f"Unknown method {method!r}, expected one of {_METHODS}")
+        super().__init__(
+            config,
+            item_label,
+            system_prompt,
+            name,
+            max_concurrency,
+            reasoning,
+            num_samples,
+            structured_output,
+        )
+        if strategy not in _STRATEGIES:
+            raise ValueError(f"Unknown strategy {strategy!r}, expected one of {_STRATEGIES}")
         if num_child < 2:
             raise ValueError("num_child must be >= 2 (use PairwiseRanker for pairs)")
         if num_child > 25:
@@ -71,37 +93,87 @@ class SetwiseRanker(BaseRanker):
                 "labels A-Z)"
             )
         self.num_child = num_child
-        self.method = method
+        self.strategy = strategy
         self.k = k
+        self.seed = seed
+        self._rng = random.Random(seed)
         # Sized to num_child + 1: heapsort's sift-down compares a parent
         # against all of its children in one call, so the largest group any
         # single `compare()` call sees is num_child children + 1 parent.
         self.characters = [chr(ord("A") + i) for i in range(num_child + 1)]
 
-    def compare(self, query: str, candidates: list[Candidate]) -> Candidate:
-        """Return whichever of `candidates` the LLM judges most relevant to `query`."""
-        labels = self.characters[: len(candidates)]
-        label_re = re.compile(r"\b(" + "|".join(labels) + r")\b")
+    def _build_group_messages(
+        self, query: str, group: list[Candidate], labels: list[str]
+    ) -> list[dict]:
         system = self.system_prompt_override or setwise_system_prompt(self.item_label)
-        user = setwise_user_prompt(query, candidates, labels, self.item_label, self.reasoning)
-        response = self._call(
-            [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        user = setwise_user_prompt(
+            query,
+            group,
+            labels,
+            self.item_label,
+            self.reasoning,
+            self.structured_output,
         )
-        text = extract_final_answer(response.text)
+        return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+    def _response_format(self, labels: list[str]) -> dict | None:
+        return structured.setwise_schema(labels) if self.structured_output else None
+
+    def _parse_choice(self, text: str, group: list[Candidate], labels: list[str]) -> Candidate:
+        if self.structured_output:
+            choice = structured.parse_setwise_json(text, labels)
+            if choice is not None:
+                return group[labels.index(choice)]
+        label_re = re.compile(r"\b(" + "|".join(labels) + r")\b")
+        text = extract_final_answer(text)
         match = label_re.search(text.strip())
         if match is None:
-            logger.warning("Could not parse a label from output: %r", response.text)
-            return candidates[0]
-        return candidates[labels.index(match.group(1))]
+            logger.warning("Could not parse a label from output: %r", text)
+            return group[0]
+        return group[labels.index(match.group(1))]
+
+    def compare(self, query: str, candidates: list[Candidate]) -> Candidate:
+        """Return whichever of `candidates` the LLM judges most relevant to `query`.
+
+        See `num_samples` on the class for the reshuffled,
+        majority-vote behavior when it's set above 1.
+        """
+        labels = self.characters[: len(candidates)]
+        response_format = self._response_format(labels)
+        n = self.num_samples
+
+        if n <= 1:
+            messages = self._build_group_messages(query, candidates, labels)
+            response = self._call(messages, response_format)
+            return self._parse_choice(response.text, candidates, labels)
+
+        batches = []
+        sample_groups = []
+        for _ in range(n):
+            shuffled = list(candidates)
+            self._rng.shuffle(shuffled)
+            batches.append(self._build_group_messages(query, shuffled, labels))
+            sample_groups.append(shuffled)
+        responses = self._call_many(batches, response_format)
+
+        votes = {c.id: 0 for c in candidates}
+        for group, response in zip(sample_groups, responses):
+            winner = self._parse_choice(response.text, group, labels)
+            votes[winner.id] += 1
+        best_count = max(votes.values())
+        for c in candidates:
+            if votes[c.id] == best_count:
+                return c
+        return candidates[0]  # unreachable, satisfies type checkers
 
     def rank(self, query: str, candidates: list[Candidate]) -> list[Candidate]:
         self._reset_stats()
         arr = list(candidates)
         k = len(arr) if self.k is None else min(self.k, len(arr))
 
-        if self.method == "heapsort":
+        if self.strategy == "heapsort":
             top = self._heapsort(query, arr, k)
-        elif self.method == "bubblesort":
+        elif self.strategy == "bubblesort":
             top = self._bubblesort(query, arr, k)
         else:
             top = self._insertion(query, arr, k)

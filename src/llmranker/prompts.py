@@ -49,6 +49,7 @@ def pointwise_user_prompt(
     candidate: Candidate,
     item_label: str = DEFAULT_ITEM_LABEL,
     reasoning: bool = False,
+    structured_output: bool = False,
 ) -> str:
     prompt = (
         f'Query: "{query}"\n\n'
@@ -57,7 +58,61 @@ def pointwise_user_prompt(
     )
     if reasoning:
         return prompt + reasoning_suffix("<integer score 0-10>")
+    if structured_output:
+        return prompt + " Respond with the score as JSON."
     return prompt + " Output only the integer score, nothing else."
+
+
+def pointwise_multi_criteria_user_prompt(
+    query: str,
+    candidate: Candidate,
+    names: list[str],
+    item_label: str = DEFAULT_ITEM_LABEL,
+    reasoning: bool = False,
+    structured_output: bool = False,
+) -> str:
+    criteria_list = ", ".join(names)
+    prompt = (
+        f'Query: "{query}"\n\n'
+        f'{item_label.capitalize()}: "{candidate.text}"\n\n'
+        f"Rate this {item_label} from 0 to 10 on each of the following "
+        f"criteria, independently of the others: {criteria_list}."
+    )
+    if reasoning:
+        hint = ", ".join(f"{name}=<score>" for name in names)
+        return prompt + reasoning_suffix(hint)
+    if structured_output:
+        return prompt + " Respond with a JSON object mapping each criterion name to its score."
+    example = ", ".join(f"{name}=<score>" for name in names)
+    return prompt + f" Output only '{example}', comma-separated, nothing else."
+
+
+# --- criteria extraction ----------------------------------------------------
+
+
+def criteria_extraction_system_prompt(item_label: str = DEFAULT_ITEM_LABEL) -> str:
+    return (
+        f"You are an intelligent assistant that identifies the distinct "
+        f"relevance criteria a user's query expresses about a {item_label}."
+    )
+
+
+def criteria_extraction_user_prompt(
+    query: str,
+    item_label: str = DEFAULT_ITEM_LABEL,
+    reasoning: bool = False,
+    structured_output: bool = False,
+) -> str:
+    prompt = (
+        f'Given the query "{query}", extract the distinct relevance criteria '
+        f"it expresses about a {item_label} (e.g. price, location, a "
+        f"specific feature), as short names (2-4 words each)."
+    )
+    if reasoning:
+        return prompt + reasoning_suffix("<comma-separated criteria names>")
+    if structured_output:
+        return prompt + " Respond with the criteria names as a JSON array of strings."
+    return prompt + " Output only the criteria names, comma-separated, nothing else."
 
 
 # --- pairwise --------------------------------------------------------------
@@ -76,6 +131,7 @@ def pairwise_user_prompt(
     candidates: list[Candidate],
     item_label: str = DEFAULT_ITEM_LABEL,
     reasoning: bool = False,
+    structured_output: bool = False,
 ) -> str:
     a, b = candidates[0], candidates[1]
     label = item_label.capitalize()
@@ -87,6 +143,8 @@ def pairwise_user_prompt(
     )
     if reasoning:
         return prompt + reasoning_suffix("A or B")
+    if structured_output:
+        return prompt + " Respond with the chosen label as JSON."
     return prompt + (
         f"\n\nOutput only the label of the more relevant {item_label}, 'A' or 'B'. "
         f"You must choose exactly one, do not output anything else."
@@ -110,6 +168,7 @@ def setwise_user_prompt(
     characters: list[str],
     item_label: str = DEFAULT_ITEM_LABEL,
     reasoning: bool = False,
+    structured_output: bool = False,
 ) -> str:
     label = item_label.capitalize()
     body = "\n\n".join(f'{label} {characters[i]}: "{c.text}"' for i, c in enumerate(candidates))
@@ -119,6 +178,8 @@ def setwise_user_prompt(
     )
     if reasoning:
         return prompt + reasoning_suffix("<label letter>")
+    if structured_output:
+        return prompt + " Respond with the chosen label as JSON."
     return prompt + (
         f"\n\nOutput only the label of the single most relevant {item_label}, "
         f"e.g. 'A' or 'D'. You must choose exactly one, do not choose multiple or none."
@@ -158,6 +219,7 @@ def listwise_post_prompt(
     num: int,
     item_label: str = DEFAULT_ITEM_LABEL,
     reasoning: bool = False,
+    structured_output: bool = False,
 ) -> str:
     prompt = (
         f"Query: {query}.\n"
@@ -168,6 +230,8 @@ def listwise_post_prompt(
     )
     if reasoning:
         return prompt + reasoning_suffix("[] > [] > ...")
+    if structured_output:
+        return prompt + " Respond with the ranking (a list of identifiers) as JSON."
     return prompt + " Only respond with the ranking, do not say any word or explain."
 
 
@@ -189,6 +253,7 @@ def tourrank_group_user_prompt(
     advance_count: int,
     item_label: str = DEFAULT_ITEM_LABEL,
     reasoning: bool = False,
+    structured_output: bool = False,
 ) -> str:
     label = item_label.capitalize()
     body = "\n\n".join(f'{label} {characters[i]}: "{c.text}"' for i, c in enumerate(candidates))
@@ -198,6 +263,8 @@ def tourrank_group_user_prompt(
     )
     if reasoning:
         return prompt + reasoning_suffix(f"<{advance_count} comma-separated labels>")
+    if structured_output:
+        return prompt + f" Respond with the {advance_count} selected labels as JSON."
     return prompt + (
         f"\n\nOutput only the labels of the {advance_count} most relevant "
         f"{item_label}s, separated by commas, e.g. 'A, C'. Select exactly "

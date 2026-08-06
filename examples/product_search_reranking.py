@@ -41,7 +41,7 @@ candidates = [Candidate(id=pid, text=text) for pid, text in PRODUCTS]
 ranker = SetwiseRanker(
     LLMConfig(model="gpt-4o-mini"),
     num_child=3,
-    method="heapsort",
+    strategy="heapsort",
     k=6,
     item_label="product",
 )

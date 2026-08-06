@@ -52,12 +52,20 @@ class LLMResponse:
     completion_tokens: int
 
 
-def call_llm(messages: list[dict[str, str]], config: LLMConfig) -> LLMResponse:
+def call_llm(
+    messages: list[dict[str, str]],
+    config: LLMConfig,
+    response_format: dict[str, Any] | None = None,
+) -> LLMResponse:
     """Call the configured LLM via LiteLLM, retrying on transient errors.
 
     Retries with exponential backoff up to `config.max_retries` times on
     rate limits / connection / timeout / server errors, then re-raises.
     Non-retryable errors (auth, bad request, ...) propagate immediately.
+
+    `response_format`, when given, is LiteLLM's normalized structured-output
+    schema (see `llmranker.structured.json_schema_format`); passed straight
+    through to `litellm.completion`.
     """
 
     @retry(
@@ -73,6 +81,9 @@ def call_llm(messages: list[dict[str, str]], config: LLMConfig) -> LLMResponse:
         ),
     )
     def _call() -> LLMResponse:
+        kwargs = dict(config.extra_kwargs)
+        if response_format is not None:
+            kwargs["response_format"] = response_format
         response = litellm.completion(
             model=config.model,
             messages=messages,
@@ -80,7 +91,7 @@ def call_llm(messages: list[dict[str, str]], config: LLMConfig) -> LLMResponse:
             timeout=config.timeout,
             api_key=config.api_key,
             api_base=config.api_base,
-            **config.extra_kwargs,
+            **kwargs,
         )
         usage = response.get("usage") or {}
         return LLMResponse(

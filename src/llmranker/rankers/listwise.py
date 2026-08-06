@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 
+from .. import structured
 from ..llm import LLMConfig, truncate_to_tokens
 from ..prompts import extract_final_answer, listwise_post_prompt, listwise_prefix_messages
 from ..types import Candidate
@@ -28,7 +29,11 @@ class ListwiseRanker(BaseRanker):
         (step_size < window_size means adjacent windows overlap, which is
         what lets a candidate's rank improve across multiple windows).
     `num_repeat`: how many full passes over the list to make; each pass
-        starts from the current (already improved) order.
+        starts from the current (already improved) order. This is a
+        different axis from `num_samples` below: `num_repeat` changes the
+        algorithm's convergence behavior across the whole list, while
+        `num_samples` asks the *same* window multiple times for a more
+        robust single judgment.
     `max_tokens_per_candidate`: if set, truncates each candidate's text to
         this many tokens before including it in the prompt (useful for long
         documents or small-context models). Off by default.
@@ -37,6 +42,12 @@ class ListwiseRanker(BaseRanker):
     strategy is inherently sequential: `max_concurrency` has **no
     effect** here. It's accepted for constructor-signature consistency with
     the other rankers only.
+
+    `num_samples > 1`: asks the same window `num_samples` times and
+    merges the resulting permutations by Borda count (each candidate earns
+    `window_size - position` points per sample, summed across samples, then
+    sorted descending; ties fall back to the candidates' original order
+    within the window).
     """
 
     def __init__(
@@ -51,8 +62,19 @@ class ListwiseRanker(BaseRanker):
         name: str | None = None,
         max_concurrency: int = 5,
         reasoning: bool = False,
+        num_samples: int = 1,
+        structured_output: bool = False,
     ):
-        super().__init__(config, item_label, system_prompt, name, max_concurrency, reasoning)
+        super().__init__(
+            config,
+            item_label,
+            system_prompt,
+            name,
+            max_concurrency,
+            reasoning,
+            num_samples,
+            structured_output,
+        )
         if step_size > window_size:
             raise ValueError("step_size must be <= window_size")
         if window_size < 2:
@@ -79,21 +101,22 @@ class ListwiseRanker(BaseRanker):
             {
                 "role": "user",
                 "content": listwise_post_prompt(
-                    query, len(window), self.item_label, self.reasoning
+                    query,
+                    len(window),
+                    self.item_label,
+                    self.reasoning,
+                    self.structured_output,
                 ),
             }
         )
         return messages
 
-    def _parse_permutation(self, text: str, n: int) -> list[int]:
-        """Parse a ranking string like '[3] > [1] > [2]' into a 0-indexed
-        order. Out-of-range or duplicate identifiers are dropped; any
-        candidate the model didn't mention is appended in its original
-        position so every candidate always ends up somewhere in the output.
-        """
-        text = extract_final_answer(text)
-        found = [int(d) - 1 for d in _DIGIT_RE.findall(text)]
-        seen = set()
+    def _response_format(self) -> dict | None:
+        return structured.listwise_schema() if self.structured_output else None
+
+    @staticmethod
+    def _normalize_order(found: list[int], n: int) -> list[int]:
+        seen: set[int] = set()
         order: list[int] = []
         for idx in found:
             if 0 <= idx < n and idx not in seen:
@@ -104,11 +127,41 @@ class ListwiseRanker(BaseRanker):
                 order.append(idx)
         return order
 
+    def _parse_permutation(self, text: str, n: int) -> list[int]:
+        """Parse a ranking string like '[3] > [1] > [2]' (or, with
+        structured_output, a JSON `{"ranking": [3, 1, 2]}`) into a 0-indexed
+        order. Out-of-range or duplicate identifiers are dropped; any
+        candidate the model didn't mention is appended in its original
+        position so every candidate always ends up somewhere in the output.
+        """
+        if self.structured_output:
+            parsed = structured.parse_listwise_json(text)
+            if parsed is not None:
+                return self._normalize_order([i - 1 for i in parsed], n)
+        text = extract_final_answer(text)
+        found = [int(d) - 1 for d in _DIGIT_RE.findall(text)]
+        return self._normalize_order(found, n)
+
     def compare(self, query: str, window: list[Candidate]) -> list[Candidate]:
         """Return `window` reordered most-to-least relevant to `query`."""
-        response = self._call(self._build_messages(query, window))
-        order = self._parse_permutation(response.text, len(window))
-        return [window[i] for i in order]
+        n = self.num_samples
+        response_format = self._response_format()
+
+        if n <= 1:
+            response = self._call(self._build_messages(query, window), response_format)
+            order = self._parse_permutation(response.text, len(window))
+            return [window[i] for i in order]
+
+        batches = [self._build_messages(query, window) for _ in range(n)]
+        responses = self._call_many(batches, response_format)
+        m = len(window)
+        points = [0.0] * m
+        for response in responses:
+            order = self._parse_permutation(response.text, m)
+            for position, idx in enumerate(order):
+                points[idx] += m - position
+        ranked_indices = sorted(range(m), key=lambda i: points[i], reverse=True)
+        return [window[i] for i in ranked_indices]
 
     def rank(self, query: str, candidates: list[Candidate]) -> list[Candidate]:
         self._reset_stats()
