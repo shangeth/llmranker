@@ -308,3 +308,74 @@ def test_pointwise_criteria_auto_falls_back_to_holistic_on_extraction_failure(fa
 def test_pointwise_criteria_rejects_invalid_config(criteria):
     with pytest.raises(ValueError):
         PointwiseRanker(LLMConfig(model="gpt-4o-mini"), criteria=criteria)
+
+
+# rank() dispatches num_samples>1 through its own batching/averaging code,
+# written separately from score()'s -- every num_samples test above only
+# calls score(), so these exercise the rank()-specific paths directly.
+
+
+def test_pointwise_rank_num_samples_averages_scores_holistic(fake_llm):
+    candidates = [Candidate(id="a", text="hotel a"), Candidate(id="b", text="hotel b")]
+    # batches are ordered [a-sample1, a-sample2, b-sample1, b-sample2]
+    fake_llm.responses = ["4", "6", "2", "8"]
+    ranker = PointwiseRanker(
+        LLMConfig(model="gpt-4o-mini", temperature=0.7), num_samples=2, max_concurrency=1
+    )
+
+    result = ranker.rank("query", candidates)
+
+    scores = {c.id: c.score for c in result}
+    assert scores["a"] == pytest.approx(5.0)  # (4+6)/2
+    assert scores["b"] == pytest.approx(5.0)  # (2+8)/2
+    assert ranker.total_calls == 4
+
+
+def test_pointwise_rank_criteria_num_samples_averages_before_combining(fake_llm):
+    candidates = [Candidate(id="a", text="hotel a"), Candidate(id="b", text="hotel b")]
+    fake_llm.responses = [
+        "price_fit=4, location_fit=6",  # a sample 1
+        "price_fit=6, location_fit=8",  # a sample 2
+        "price_fit=2, location_fit=2",  # b sample 1
+        "price_fit=8, location_fit=8",  # b sample 2
+    ]
+    ranker = PointwiseRanker(
+        LLMConfig(model="gpt-4o-mini", temperature=0.7),
+        criteria={"price_fit": 0.5, "location_fit": 0.5},
+        num_samples=2,
+        max_concurrency=1,
+    )
+
+    result = ranker.rank("query", candidates)
+
+    scores = {c.id: c.score for c in result}
+    assert scores["a"] == pytest.approx(6.0)  # price avg=5, location avg=7 -> 6.0
+    assert scores["b"] == pytest.approx(5.0)  # price avg=5, location avg=5 -> 5.0
+    assert ranker.total_calls == 4
+
+
+def test_pointwise_score_criteria_auto_falls_back_to_holistic_on_extraction_failure(fake_llm):
+    fake_llm.responses = ["", "7"]  # extraction unparseable -> holistic fallback
+    candidate = Candidate(id="x", text="a nice hotel")
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), criteria="auto")
+
+    assert ranker.score("query", candidate) == 7
+
+
+def test_pointwise_criteria_auto_with_structured_output(fake_llm):
+    candidates = [Candidate(id="a", text="hotel a"), Candidate(id="b", text="hotel b")]
+    fake_llm.responses = [
+        '{"criteria": ["budget", "location"]}',
+        '{"budget": 8, "location": 6}',
+        '{"budget": 4, "location": 9}',
+    ]
+    ranker = PointwiseRanker(
+        LLMConfig(model="gpt-4o-mini"), criteria="auto", structured_output=True
+    )
+
+    result = ranker.rank("affordable and central", candidates)
+
+    assert result[0].id == "a"
+    assert result[0].score == pytest.approx(7.0)  # 0.5*8 + 0.5*6
+    assert ranker.total_calls == 3
+    assert all(c["response_format"]["type"] == "json_schema" for c in fake_llm.calls)
