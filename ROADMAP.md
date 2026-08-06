@@ -13,6 +13,62 @@ what else is out there, and why each item isn't in yet. If you want to pick
 one of these up, start here rather than re-deriving the landscape from
 scratch.
 
+## Near-term: configuration on existing rankers
+
+These extend classes that already exist: no new ranker class needed, same
+shape as how `reasoning` and `debias_position` were added.
+
+- **Self-consistency / repeated sampling (`num_samples`)**: the strongest
+  finding so far. Repeat each judgment `N` times with reshuffled candidate
+  positions and aggregate (mean for pointwise scores, majority vote for
+  pairwise/setwise labels) instead of asking once. A Thomson Reuters Labs
+  study found up to 40% AUC-PR improvement from 15x repeated batched
+  pointwise scoring versus a single pass, and since repeats run in
+  parallel through the existing `_call_many`, it costs extra calls/spend
+  but not extra wall-clock time. This would **generalize, and could
+  replace, the current binary `debias_position` flag**: a
+  "randomized-direction oracle" (assign candidates to random slots per
+  comparison rather than always querying both directions) converts
+  systematic position bias into zero-mean noise that repeated sampling
+  already cancels out, without paying `debias_position=True`'s current
+  2x-calls cost every time.
+- **Structured/schema-constrained output**: an optional mode using
+  LiteLLM's normalized `response_format` JSON-schema support (works across
+  several providers) instead of regex-parsing free text. Would harden
+  every existing ranker's response parsing without changing any algorithm.
+- **Global-context pointwise scoring**: `PointwiseRanker` currently scores
+  each candidate in total isolation, its most-cited weakness. A cheap
+  first-pass ranking fed back in as calibration context before individual
+  scoring ("Post-Aggregated Global Context", arXiv:2506.10859) could fix
+  this directly. Exact mechanics need a full read of the paper before
+  implementing.
+- **Multi-criteria/weighted scoring**: score named sub-criteria separately
+  (e.g. price fit, location fit, family-friendliness) instead of one
+  holistic judgment, then combine with weights. Cuts across rankers rather
+  than living on one; more new code than the other items here (a new
+  prompt template shape, a combination step) but still a scoring-scheme
+  variation layered on existing comparison/sort logic, not a new sort
+  algorithm. Fits the recommendation use case particularly well.
+
+## New ranking paradigm candidates
+
+- **`CascadeRanker`** (cheap-then-expensive tiered ranking): a wrapper
+  that composes two *existing* rankers rather than a new prompting
+  algorithm: a fast/cheap ranker (e.g. pointwise) narrows the field, a
+  slower/pricier ranker (e.g. setwise) does a thorough re-rank of just the
+  survivors. Well-established pattern (FrugalGPT-style LLM cascading,
+  arXiv:2305.05176); no existing open-source library doing this
+  specifically for LLM rerankers as far as this research found. Lower
+  implementation risk than a genuinely new algorithm, since it's
+  orchestration of things that already work, not new prompt research.
+- **JointRank** (arXiv:2506.22262): claims to rank a large candidate set
+  in a single pass via block-partitioning + aggregation, potentially a
+  genuine 6th paradigm alongside pointwise/pairwise/listwise/setwise/
+  tournament. Flagged as "needs deeper reading" rather than committed:
+  the mechanics couldn't be confirmed confidently from available extracts,
+  and the TourRank/Setwise Insertion work earlier was a direct lesson in
+  not implementing from a vague summary.
+
 ## Needs raw token logprobs (not yet supported generically)
 
 LiteLLM doesn't expose token-level log-probabilities uniformly across every
@@ -26,17 +82,25 @@ these are on hold:
   relevant? Yes/No" and derive the score from the log-probability of the
   "Yes" token (softmax against "No"). More calibrated than free-text
   numbers; used by HELM and others.
-- **FIRST — single-token listwise decoding** (arXiv:2406.15657): instead of
-  generating a full ranked permutation as text (what `ListwiseRanker` does
-  today), read the logits of just the *first* generated token to derive the
-  ranking directly. ~50% faster listwise inference in the paper's
-  benchmarks.
+- **FIRST: single-token listwise decoding** (arXiv:2406.15657): instead
+  of generating a full ranked permutation as text (what `ListwiseRanker`
+  does today), read the logits of just the *first* generated token to
+  derive the ranking directly. ~50% faster listwise inference in the
+  paper's benchmarks.
 - **Query-generation pointwise scoring** (UPR-style, Sachan et al.): score
   = log-likelihood of the LLM generating the *original query* conditioned
   on the candidate document. Lowest priority of the three: it needs raw
   teacher-forced scoring rather than chat-completion, which doesn't map
   cleanly onto arbitrary providers through LiteLLM's chat interface at all
   (not just a logprobs-availability question).
+- **Listwise position-debiasing** ("CapCal", content-agnostic
+  probability calibration, arXiv:2604.10150): calibrates listwise ranking
+  scores against the model's own "empty content" positional prior,
+  isolating genuine relevance signal from positional bias. Confirmed to
+  need identifier-level probabilities/logits; the paper explicitly
+  states it's inapplicable to black-box text-only APIs. So, like the
+  items above, this is blocked on generic logprobs access rather than
+  being an open design question.
 
 ## Training-shaped, not prompting-shaped
 
@@ -53,12 +117,19 @@ these are on hold:
   calibrated absolute relevance value the way `PointwiseRanker.score()`
   does. Recent work on self-calibrated listwise reranking produces global
   scores from listwise passes and could inform a future addition here.
-- **Bidirectional debiasing beyond pairwise**: `PairwiseRanker`'s
-  `debias_position` flag doesn't extend to `SetwiseRanker` or
-  `TourRankRanker` today. A setwise equivalent (e.g. repeat a group
-  comparison with relabeled/reshuffled positions and take a majority vote)
-  is plausible but multiplies cost by more than 2x and needs its own design
-  pass rather than a direct port of the pairwise version.
+  (Distinct from CapCal above: this is about calibrated absolute scores,
+  not positional-bias correction, and hasn't been confirmed to need
+  logprobs either way.)
+
+## Explicitly out of scope
+
+- **MMR / diversity-aware reranking**: the standard technique needs an
+  embedding-based similarity measure to avoid redundant results. This
+  package's whole positioning is "no training, no embeddings" (see the
+  README); adding this would mean either contradicting that or building
+  a parallel embeddings-dependent code path. Considered and set aside
+  deliberately, not an oversight, so it doesn't get re-proposed without
+  this context.
 
 ## Known open risk, not an algorithm
 
@@ -75,7 +146,7 @@ these are on hold:
 
 ## Sources
 
-Gathered during the research session that produced this roadmap:
+Gathered during the research sessions that produced this roadmap:
 
 - [A Setwise Approach for Effective and Highly Efficient Zero-shot Ranking with LLMs](https://arxiv.org/abs/2310.09497)
 - [Beyond Reproducibility: Advancing Zero-shot LLM Reranking Efficiency with Setwise Insertion](https://arxiv.org/abs/2504.10509)
@@ -91,3 +162,10 @@ Gathered during the research session that produced this roadmap:
 - [Rank-R1: Enhancing Reasoning in LLM-based Document Rerankers via RL](https://arxiv.org/pdf/2503.06034)
 - [The Vulnerability of LLM Rankers to Prompt Injection Attacks](https://arxiv.org/pdf/2602.16752)
 - [Large Language Models for Reranking: A Survey](https://www.techrxiv.org/doi/pdf/10.36227/techrxiv.176300630.01740917/v1)
+- [Batched Self-Consistency Improves LLM Relevance Assessment and Ranking (Thomson Reuters Labs)](https://medium.com/tr-labs-ml-engineering-blog/batched-self-consistency-improves-llm-relevance-assessment-and-ranking-54713295f58f)
+- [Active Learners as Efficient PRP Rerankers](https://arxiv.org/abs/2605.14236)
+- [FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance](https://arxiv.org/abs/2305.05176)
+- [JointRank: Rank Large Set with Single Pass](https://arxiv.org/pdf/2506.22262)
+- [Precise Zero-Shot Pointwise Ranking with LLMs through Post-Aggregated Global Context Information](https://arxiv.org/pdf/2506.10859)
+- [Learning from Emptiness: De-biasing Listwise Rerankers with Content-Agnostic Probability Calibration](https://arxiv.org/html/2604.10150v1)
+- [Multi-Conditional Ranking with Large Language Models](https://arxiv.org/html/2404.00211v3)
