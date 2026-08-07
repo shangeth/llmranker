@@ -61,7 +61,9 @@ def test_pairwise_allpairs_counts_duplicate_ids_separately(fake_llm):
     def prefer_longer(messages):
         import re
 
-        entries = re.findall(r'Item ([AB]): "([^"]*)"', messages[-1]["content"])
+        entries = re.findall(
+            r"Item ([AB]): <candidate>([^<]*)</candidate>", messages[-1]["content"]
+        )
         return max(entries, key=lambda e: len(e[1]))[0]
 
     fake_llm.responses = prefer_longer
@@ -167,33 +169,16 @@ def test_pointwise_warns_when_score_output_is_ambiguous(fake_llm, caplog, output
 
 
 # --- num_samples that cannot help must say so ------------------------------
-
-
-def test_listwise_warns_when_num_samples_cannot_help(fake_llm, caplog):
-    """Listwise sends an identical prompt every sample, so at temperature=0
-    the repeats are pure waste. Pointwise warned about this; listwise
-    silently burned the calls."""
-    fake_llm.responses = lambda m: "[2] > [1] > [3] > [4]"
-    candidates = [Candidate(id=str(i), text=f"item-{i}") for i in range(4)]
-
-    with caplog.at_level(logging.WARNING, logger="llmranker"):
-        ListwiseRanker(LLMConfig(model="gpt-4o-mini"), window_size=4, num_samples=5).rank(
-            "q", candidates
-        )
-
-    assert "temperature=0.0" in caplog.text
-
-
-def test_listwise_does_not_warn_when_temperature_is_raised(fake_llm, caplog):
-    fake_llm.responses = lambda m: "[2] > [1] > [3] > [4]"
-    candidates = [Candidate(id=str(i), text=f"item-{i}") for i in range(4)]
-
-    with caplog.at_level(logging.WARNING, logger="llmranker"):
-        ListwiseRanker(
-            LLMConfig(model="gpt-4o-mini", temperature=0.7), window_size=4, num_samples=5
-        ).rank("q", candidates)
-
-    assert "temperature=0.0" not in caplog.text
+#
+# `ListwiseRanker` used to send an identical prompt every sample, so this
+# section originally pinned a warning at temperature=0. Permutation
+# self-consistency (see `tests/test_listwise.py`'s
+# `test_listwise_num_samples_no_low_temperature_warning`) means every sample
+# now genuinely varies via shuffling, the same reason pairwise/setwise never
+# warned here -- so the warning was removed for listwise, not just silenced,
+# and its coverage lives with the rest of that ranker's tests instead of
+# here. Pointwise still sends an identical prompt per sample and still
+# warns; see `test_pointwise_num_samples_warns_at_zero_temperature`.
 
 
 # --- tourrank must not advance the same candidate twice --------------------

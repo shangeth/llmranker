@@ -70,6 +70,48 @@ def parse_pointwise_multi_criteria_json(text: str, names: list[str]) -> dict[str
     return scores
 
 
+def pointwise_batch_schema(labels: list[str]) -> dict[str, Any]:
+    return json_schema_format(
+        "pointwise_batch_scores",
+        {
+            "type": "object",
+            "properties": {
+                "scores": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string", "enum": labels},
+                            "score": {"type": "number"},
+                        },
+                        "required": ["label", "score"],
+                        "additionalProperties": False,
+                    },
+                    "minItems": len(labels),
+                    "maxItems": len(labels),
+                }
+            },
+            "required": ["scores"],
+            "additionalProperties": False,
+        },
+    )
+
+
+def parse_pointwise_batch_json(text: str, labels: list[str]) -> dict[str, float] | None:
+    obj = _load(text)
+    scores = obj.get("scores") if obj else None
+    if not isinstance(scores, list):
+        return None
+    out: dict[str, float] = {}
+    for entry in scores:
+        if not isinstance(entry, dict):
+            continue
+        label, value = entry.get("label"), entry.get("score")
+        if label in labels and isinstance(value, (int, float)):
+            out[label] = float(value)  # duplicate label: last-write-wins
+    return out or None
+
+
 def criteria_extraction_schema() -> dict[str, Any]:
     return json_schema_format(
         "criteria_extraction",

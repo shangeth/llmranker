@@ -29,7 +29,7 @@ def test_allpairs_asks_every_pair_in_both_orders(fake_llm):
     PairwiseRanker(LLMConfig(model="m"), strategy="allpairs").rank("q", _candidates(4))
 
     asked = [
-        tuple(re.findall(r'Item [AB]: "(d\d)"', c["messages"][-1]["content"]))
+        tuple(re.findall(r"Item [AB]: <candidate>(d\d)</candidate>", c["messages"][-1]["content"]))
         for c in fake_llm.calls
     ]
     pairs = {frozenset(p) for p in asked}
@@ -60,7 +60,7 @@ def test_allpairs_consistent_preference_beats_a_disagreeing_one(fake_llm):
     only wins by position."""
 
     def prefer_d0(messages):
-        entries = re.findall(r'Item ([AB]): "(d\d)"', messages[-1]["content"])
+        entries = re.findall(r"Item ([AB]): <candidate>(d\d)</candidate>", messages[-1]["content"])
         for label, doc in entries:
             if doc == "d0":
                 return label
@@ -125,7 +125,9 @@ def test_listwise_slides_from_the_back_of_the_list(fake_llm):
     seen = []
 
     def record(messages):
-        docs = re.findall(r"\[\d+\] (d\d+)", "\n".join(m["content"] for m in messages))
+        docs = re.findall(
+            r"\[\d+\] <candidate>(d\d+)</candidate>", "\n".join(m["content"] for m in messages)
+        )
         seen.append(docs)
         return " > ".join(f"[{i + 1}]" for i in range(len(docs)))
 

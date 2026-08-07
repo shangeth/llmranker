@@ -18,7 +18,9 @@ def test_call_many_preserves_order_despite_out_of_order_completion(fake_llm):
     delays = {"0": 0.05, "1": 0.04, "2": 0.03, "3": 0.02, "4": 0.01}
 
     def responder(messages):
-        text = next(t for t in texts_to_id if f'"{t}"' in messages[-1]["content"])
+        text = next(
+            t for t in texts_to_id if f"<candidate>{t}</candidate>" in messages[-1]["content"]
+        )
         cid = texts_to_id[text]
         time.sleep(delays[cid])
         return cid

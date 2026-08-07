@@ -7,7 +7,7 @@ from llmranker.llm import LLMConfig
 from llmranker.rankers.tourrank import TourRankRanker
 from llmranker.types import Candidate
 
-_ENTRY_RE = re.compile(r'Item ([A-Z]): "([^"]*)"')
+_ENTRY_RE = re.compile(r"Item ([A-Z]): <candidate>([^<]*)</candidate>")
 
 
 def _ground_truth_responder(rank_of):

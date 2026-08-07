@@ -18,7 +18,7 @@ def _score_responder(score_of):
     """
 
     def fn(messages):
-        text = re.search(r'Item: "([^"]*)"', messages[-1]["content"]).group(1)
+        text = re.search(r"Item: <candidate>([^<]*)</candidate>", messages[-1]["content"]).group(1)
         return str(score_of[text])
 
     return fn
@@ -151,7 +151,7 @@ def _multi_criteria_responder(scores_by_candidate_text):
     def fn(messages):
         content = messages[-1]["content"]
         for text, scores in scores_by_candidate_text.items():
-            if f'"{text}"' in content:
+            if f"<candidate>{text}</candidate>" in content:
                 return ", ".join(f"{k}={v}" for k, v in scores.items())
         raise AssertionError(f"no matching candidate text in prompt: {content!r}")
 
@@ -383,3 +383,141 @@ def test_pointwise_criteria_auto_with_structured_output(fake_llm):
     assert result[0].score == pytest.approx(7.0)  # 0.5*8 + 0.5*6
     assert ranker.total_calls == 3
     assert all(c["response_format"]["type"] == "json_schema" for c in fake_llm.calls)
+
+
+def _batch_responder(score_of):
+    """Fake LLM: returns 'A=x, B=y, ...' scores keyed by whichever candidate
+    text each label is showing in this particular batch call."""
+
+    def fn(messages):
+        content = messages[-1]["content"]
+        entries = re.findall(r"([A-Z]): <candidate>([^<]*)</candidate>", content)
+        return ", ".join(f"{label}={score_of[text]}" for label, text in entries)
+
+    return fn
+
+
+def test_pointwise_batch_size_splits_into_batches(fake_llm):
+    candidates = [Candidate(id=str(i), text=f"item-{i}") for i in range(4)]
+    score_of = {f"item-{i}": i for i in range(4)}
+    fake_llm.responses = _batch_responder(score_of)
+
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), batch_size=2)
+    result = ranker.rank("query", candidates)
+
+    assert ranker.total_calls == 2
+    for call in fake_llm.calls:
+        entries = re.findall(
+            r"[A-Z]: <candidate>([^<]*)</candidate>", call["messages"][-1]["content"]
+        )
+        assert len(entries) == 2
+    assert [c.id for c in result] == ["3", "2", "1", "0"]
+
+
+def test_pointwise_batch_default_size_one_matches_existing_behavior(fake_llm):
+    candidates = [Candidate(id="a", text="hotel a"), Candidate(id="b", text="hotel b")]
+    fake_llm.responses = by_text({"hotel a": "3", "hotel b": "9"})
+
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"))  # batch_size=1 default
+    result = ranker.rank("query", candidates)
+
+    assert ranker.total_calls == 2
+    assert [c.id for c in result] == ["b", "a"]
+
+
+def test_pointwise_batch_stb_reshuffles_batch_membership_each_round(fake_llm):
+    candidates = [Candidate(id=str(i), text=f"item-{i}") for i in range(4)]
+    score_of = {f"item-{i}": i for i in range(4)}
+    fake_llm.responses = _batch_responder(score_of)
+
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), batch_size=2, num_samples=3, seed=1)
+    ranker.rank("query", candidates)
+
+    assert ranker.total_calls == 6  # ceil(4/2) * 3
+    # Collect which two candidates were grouped together in each batch call.
+    memberships = [
+        frozenset(
+            re.findall(r"[A-Z]: <candidate>([^<]*)</candidate>", call["messages"][-1]["content"])
+        )
+        for call in fake_llm.calls
+    ]
+    assert len(set(memberships)) > 1, "expected batch membership to vary across rounds"
+
+
+def test_pointwise_batch_suppresses_low_temperature_warning(fake_llm, caplog):
+    candidates = [Candidate(id=str(i), text=f"item-{i}") for i in range(4)]
+    score_of = {f"item-{i}": i for i in range(4)}
+    fake_llm.responses = _batch_responder(score_of)
+
+    ranker = PointwiseRanker(
+        LLMConfig(model="gpt-4o-mini", temperature=0.0), batch_size=2, num_samples=3
+    )
+    ranker.rank("query", candidates)
+
+    assert "num_samples" not in caplog.text
+
+
+def test_pointwise_batch_size_rejected_with_criteria():
+    with pytest.raises(ValueError):
+        PointwiseRanker(LLMConfig(model="gpt-4o-mini"), criteria={"a": 1.0}, batch_size=2)
+
+
+def test_pointwise_batch_size_rejects_less_than_one():
+    with pytest.raises(ValueError):
+        PointwiseRanker(LLMConfig(model="gpt-4o-mini"), batch_size=0)
+
+
+def test_parse_batch_scores_handles_missing_label(fake_llm):
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"))
+    scores = ranker._parse_batch_scores("A=7", ["A", "B"])
+
+    assert scores["A"] == 7
+    assert scores["B"] == ranker.min_score
+
+
+def test_parse_batch_scores_structured_output_last_write_wins_on_duplicate_label():
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), structured_output=True)
+    text = '{"scores": [{"label": "A", "score": 3}, {"label": "A", "score": 8}]}'
+
+    scores = ranker._parse_batch_scores(text, ["A"])
+
+    assert scores["A"] == 8
+
+
+def test_parse_batch_scores_structured_output_missing_label_falls_back_to_min_score():
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), structured_output=True)
+    text = '{"scores": [{"label": "A", "score": 5}]}'
+
+    scores = ranker._parse_batch_scores(text, ["A", "B"])
+
+    assert scores["A"] == 5
+    assert scores["B"] == ranker.min_score
+
+
+def test_pointwise_batch_structured_output_parses_json(fake_llm):
+    candidates = [Candidate(id="a", text="hotel a"), Candidate(id="b", text="hotel b")]
+    fake_llm.responses = ['{"scores": [{"label": "A", "score": 3}, {"label": "B", "score": 9}]}']
+
+    # seed=0 keeps the 2-candidate shuffle at identity order (verified), so
+    # label A is candidate "a" and label B is candidate "b" as the fixed
+    # response text above assumes.
+    ranker = PointwiseRanker(
+        LLMConfig(model="gpt-4o-mini"), batch_size=2, structured_output=True, seed=0
+    )
+    result = ranker.rank("query", candidates)
+
+    assert [c.id for c in result] == ["b", "a"]
+    assert fake_llm.calls[0]["response_format"]["type"] == "json_schema"
+
+
+def test_pointwise_batch_reasoning_extracts_final_answer(fake_llm):
+    candidates = [Candidate(id="a", text="hotel a"), Candidate(id="b", text="hotel b")]
+    text = f"Thinking it over...\n\n{FINAL_ANSWER_MARKER} A=3, B=9"
+    fake_llm.responses = [text]
+
+    # seed=0 keeps the 2-candidate shuffle at identity order (verified), so
+    # label A is candidate "a" and label B is candidate "b" as above.
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), batch_size=2, reasoning=True, seed=0)
+    result = ranker.rank("query", candidates)
+
+    assert [c.id for c in result] == ["b", "a"]

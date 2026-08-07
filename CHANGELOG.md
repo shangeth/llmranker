@@ -15,6 +15,38 @@
 - Neither adds a required dependency or is imported by `llmranker/__init__.py`
   — `import llmranker` is unaffected whether or not either extra is
   installed.
+- `batch_size` on `PointwiseRanker`: scores several candidates per call
+  instead of one, using Shuffled-Then-Batched self-consistency
+  (arXiv:2505.12570) — each `num_samples` round reshuffles all candidates
+  and re-splits them into `batch_size`-sized groups, so batch *membership*
+  varies per round, not just order. `batch_size=1` (default) is unchanged
+  behavior. Not currently supported together with `criteria`.
+- `insert_rank_score_key` on `ListwiseRanker`: shows a first-stage
+  retrieval score from `Candidate.metadata` alongside each candidate's text
+  as lexical evidence (InsertRank, arXiv:2506.14086). Off by default; a
+  candidate missing the key gets no score suffix and a one-time warning
+  rather than raising.
+- Candidate text is now wrapped in `<candidate>...</candidate>` tags in
+  every ranker's prompt (with the delimiter escaped if it already appears
+  in the text), and every system prompt notes that content inside those
+  tags is data, never instructions — a mitigation (not a fix) for the
+  prompt-injection risk the README's Security section already disclosed.
+  Always on, since it's a correctness/safety change rather than a new
+  capability; a caller-supplied `system_prompt` fully replaces the default
+  one, including this notice.
+- `seed` on `ListwiseRanker`.
+
+### Fixed
+
+- **`ListwiseRanker`'s `num_samples > 1` sent an identical prompt every
+  sample**, unlike pairwise/setwise, which already randomize candidate
+  position per sample to cancel position bias. It now shuffles the window
+  into a new random order each sample too (permutation self-consistency,
+  arXiv:2310.07712) before merging by the existing Borda-count logic, which
+  was already a standard approximation to Kemeny-optimal rank aggregation
+  and needed no changes itself. Because the prompt now genuinely varies per
+  sample, the low-temperature warning no longer fires for `num_samples > 1`
+  here, the same reasoning pairwise/setwise already use.
 
 ## 0.3.0
 

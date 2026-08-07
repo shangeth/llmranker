@@ -15,10 +15,10 @@ def _narrow_prefers_high_id_refine_prefers_low_id(messages):
     the order rather than just inheriting narrow's).
     """
     content = messages[-1]["content"]
-    pointwise_match = re.search(r'Item: "item-(\d+)"', content)
+    pointwise_match = re.search(r"Item: <candidate>item-(\d+)</candidate>", content)
     if pointwise_match:
         return pointwise_match.group(1)
-    entries = re.findall(r'Item ([A-Z]): "item-(\d+)"', content)
+    entries = re.findall(r"Item ([A-Z]): <candidate>item-(\d+)</candidate>", content)
     best_label, _ = min(entries, key=lambda e: int(e[1]))
     return best_label
 

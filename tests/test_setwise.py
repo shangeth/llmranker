@@ -7,7 +7,7 @@ from llmranker.prompts import FINAL_ANSWER_MARKER
 from llmranker.rankers.setwise import SetwiseRanker
 from llmranker.types import Candidate
 
-_ENTRY_RE = re.compile(r'Item ([A-Z]): "([^"]*)"')
+_ENTRY_RE = re.compile(r"Item ([A-Z]): <candidate>([^<]*)</candidate>")
 
 
 def _ground_truth_responder(rank_of):

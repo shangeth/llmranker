@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
 
 from .. import criteria as criteria_module
 from .. import structured
-from ..llm import LLMConfig
+from ..llm import LLMConfig, LLMResponse
 from ..prompts import (
     criteria_extraction_system_prompt,
     criteria_extraction_user_prompt,
     extract_final_answer,
+    pointwise_batch_user_prompt,
     pointwise_multi_criteria_user_prompt,
     pointwise_system_prompt,
     pointwise_user_prompt,
@@ -58,6 +60,19 @@ class PointwiseRanker(BaseRanker):
     extra calls are wasted; a warning is logged if you set `num_samples >
     1` without raising `temperature`.
 
+    `batch_size > 1` scores several candidates per call instead of one,
+    using Shuffled-Then-Batched self-consistency (arXiv:2505.12570): each
+    of `num_samples` rounds reshuffles *all* candidates and re-splits them
+    into `batch_size`-sized groups (so which candidates share a call, not
+    just their order, changes every round), and a candidate's final score
+    is the mean of its score across every round it appeared in. Because
+    batch composition genuinely varies per round, `num_samples > 1` helps
+    here even at `temperature=0.0` (no warning is logged for this case,
+    matching pairwise/setwise). `rank()`-only: `score()` scores one
+    candidate at a time and ignores `batch_size`. Not currently supported
+    together with `criteria` (raises `ValueError` at construction).
+    `seed` makes the per-round shuffling reproducible.
+
     `criteria`, optional, scores named sub-criteria separately instead of
     one holistic judgment, then combines them:
       - a dict of name -> positive number: weighted sum, normalized
@@ -99,6 +114,8 @@ class PointwiseRanker(BaseRanker):
         num_samples: int = 1,
         structured_output: bool = False,
         criteria: dict[str, float] | dict[str, str] | str | None = None,
+        batch_size: int = 1,
+        seed: int | None = None,
     ):
         super().__init__(
             config,
@@ -121,6 +138,14 @@ class PointwiseRanker(BaseRanker):
             self._criteria_weights = criteria_module.resolve_weights(
                 criteria, max_score - min_score
             )
+
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        if batch_size > 1 and criteria is not None:
+            raise ValueError("batch_size > 1 is not currently supported together with criteria")
+        self.batch_size = batch_size
+        self.seed = seed
+        self._rng = random.Random(seed)
 
     # -- holistic (single-score) path --------------------------------------
 
@@ -182,6 +207,102 @@ class PointwiseRanker(BaseRanker):
 
     def _clamp(self, value: float) -> float:
         return min(max(value, self.min_score), self.max_score)
+
+    # -- batched (STB self-consistency) path --------------------------------
+
+    def _build_batch_messages(
+        self, query: str, candidates: list[Candidate], labels: list[str]
+    ) -> list[dict]:
+        system = self.system_prompt_override or pointwise_system_prompt(self.item_label)
+        user = pointwise_batch_user_prompt(
+            query,
+            candidates,
+            labels,
+            self.item_label,
+            self.reasoning,
+            self.structured_output,
+        )
+        return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+    def _parse_batch_scores(self, text: str, labels: list[str]) -> dict[str, float]:
+        if self.structured_output:
+            parsed = structured.parse_pointwise_batch_json(text, labels)
+            if parsed is not None:
+                scored = {label: self._clamp(parsed[label]) for label in parsed}
+                missing = [label for label in labels if label not in scored]
+                if missing:
+                    logger.warning("Batch response missing labels %s; using min_score", missing)
+                    for label in missing:
+                        scored[label] = self.min_score
+                return scored
+
+        text = extract_final_answer(text)
+        result: dict[str, float] = {}
+        for label in labels:
+            match = re.search(rf"\b{re.escape(label)}\b\s*[:=]?\s*({_NUMBER})", text)
+            if match:
+                result[label] = self._clamp(float(match.group(1)))
+        missing = [label for label in labels if label not in result]
+        if missing:
+            logger.warning(
+                "Could not parse scores for labels %s in batch response: %r", missing, text
+            )
+            for label in missing:
+                result[label] = self.min_score
+        return result
+
+    def _rank_batched(self, query: str, candidates: list[Candidate]) -> list[Candidate]:
+        batches: list[tuple[list[Candidate], list[str]]] = []
+        for _ in range(self.num_samples):
+            shuffled = list(candidates)
+            self._rng.shuffle(shuffled)
+            for start in range(0, len(shuffled), self.batch_size):
+                group = shuffled[start : start + self.batch_size]
+                labels = [chr(ord("A") + i) for i in range(len(group))]
+                batches.append((group, labels))
+
+        # A structured-output schema is sized to its batch (the label enum),
+        # so batches of different sizes -- the last, shorter batch of an
+        # uneven split -- can't share one response_format. `_call_many`
+        # takes a single response_format for its whole dispatch, so group
+        # batches by size and dispatch each size together instead of one
+        # call per individual batch.
+        by_size: dict[int, list[int]] = {}
+        for i, (group, _labels) in enumerate(batches):
+            by_size.setdefault(len(group), []).append(i)
+
+        responses: list[LLMResponse | None] = [None] * len(batches)
+        for size, indices in by_size.items():
+            labels = [chr(ord("A") + i) for i in range(size)]
+            response_format = (
+                structured.pointwise_batch_schema(labels) if self.structured_output else None
+            )
+            message_batches = [
+                self._build_batch_messages(query, batches[i][0], batches[i][1]) for i in indices
+            ]
+            for idx, resp in zip(indices, self._call_many(message_batches, response_format)):
+                responses[idx] = resp
+
+        totals = {c.id: 0.0 for c in candidates}
+        counts = {c.id: 0 for c in candidates}
+        for (group, labels), response in zip(batches, responses):
+            assert response is not None
+            scores = self._parse_batch_scores(response.text, labels)
+            for label, candidate in zip(labels, group):
+                totals[candidate.id] += scores[label]
+                counts[candidate.id] += 1
+
+        scored = [
+            Candidate(
+                id=c.id,
+                text=c.text,
+                score=totals[c.id] / counts[c.id] if counts[c.id] else self.min_score,
+                metadata=copy_metadata(c.metadata),
+            )
+            for c in candidates
+        ]
+        scored.sort(key=lambda c: c.score or 0.0, reverse=True)
+        return scored
 
     def _score_holistic(self, query: str, candidate: Candidate) -> float:
         n = self.num_samples
@@ -364,5 +485,7 @@ class PointwiseRanker(BaseRanker):
     def rank(self, query: str, candidates: list[Candidate]) -> list[Candidate]:
         self._reset_stats()
         if self.criteria is None:
+            if self.batch_size > 1:
+                return self._rank_batched(query, candidates)
             return self._rank_holistic(query, candidates)
         return self._rank_multi_criteria(query, candidates)

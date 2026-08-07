@@ -13,8 +13,8 @@ def _ground_truth_responder(rank_of):
 
     def fn(messages):
         user_content = messages[-1]["content"]
-        a_text = re.search(r'Item A: "([^"]*)"', user_content).group(1)
-        b_text = re.search(r'Item B: "([^"]*)"', user_content).group(1)
+        a_text = re.search(r"Item A: <candidate>([^<]*)</candidate>", user_content).group(1)
+        b_text = re.search(r"Item B: <candidate>([^<]*)</candidate>", user_content).group(1)
         return "A" if rank_of[a_text] < rank_of[b_text] else "B"
 
     return fn

@@ -146,7 +146,9 @@ def test_cascade_uses_rerank_api_as_the_cheap_narrow_stage(fake_rerank, fake_llm
     fake_rerank.results = [{"index": i, "relevance_score": float(i)} for i in range(4, -1, -1)]
 
     def pick_lowest_id(messages):
-        entries = re.findall(r'Item ([A-Z]): "item-(\d+)"', messages[-1]["content"])
+        entries = re.findall(
+            r"Item ([A-Z]): <candidate>item-(\d+)</candidate>", messages[-1]["content"]
+        )
         best_label, _ = min(entries, key=lambda e: int(e[1]))
         return best_label
 

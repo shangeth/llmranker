@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
 
 from .. import structured
 from ..llm import LLMConfig, truncate_to_tokens
-from ..prompts import extract_final_answer, listwise_post_prompt, listwise_prefix_messages
+from ..prompts import (
+    extract_final_answer,
+    format_candidate_text,
+    listwise_post_prompt,
+    listwise_prefix_messages,
+)
 from ..types import Candidate, copy_metadata
 from .base import BaseRanker
 
@@ -42,22 +48,32 @@ class ListwiseRanker(BaseRanker):
         this many tokens before including it in the prompt (useful for long
         documents or small-context models). Off by default.
 
+    `insert_rank_score_key`: if set, looks up `candidate.metadata[key]` for
+        each candidate and appends it to that candidate's line in the
+        prompt as first-stage evidence (e.g. a BM25 score from whatever
+        retrieved these candidates), the way InsertRank
+        (arXiv:2506.14086) shows a listwise reranker benefiting from
+        lexical evidence alongside the text. Off by default (`None`). A
+        candidate missing the key gets no score suffix and a one-time
+        warning, rather than raising -- mixed candidate sets (some scored,
+        some not) are a realistic caller mistake, not a hard error.
+
     Every window's call depends on the previous window's output, so this
     strategy is inherently sequential: `max_concurrency` does **not**
     parallelize the windows. It is still used when `num_samples > 1`, where
     the repeated judgments of a *single* window are independent and
     dispatched together.
 
-    `num_samples > 1`: asks the same window `num_samples` times and
-    merges the resulting permutations by Borda count (each candidate earns
-    `window_size - position` points per sample, summed across samples, then
-    sorted descending; ties fall back to the candidates' original order
-    within the window). Unlike `PairwiseRanker`/`SetwiseRanker`, the prompt
-    is *identical* across samples (there's no position to reshuffle when
-    the model is being asked for a whole permutation), so this only helps
-    at `LLMConfig(temperature=...)` above 0; at the default
-    `temperature=0.0` every repeat returns the same permutation and a
-    warning is logged.
+    `num_samples > 1`: shuffles the window into a different random order
+    for each sample (`seed` makes this reproducible), the same
+    position-bias-cancelling idea `PairwiseRanker`/`SetwiseRanker` already
+    use, then merges the resulting permutations by Borda count (each
+    candidate earns `window_size - position` points per sample, summed
+    across samples, then sorted descending; ties fall back to the
+    candidates' original order within the window) -- permutation
+    self-consistency (arXiv:2310.07712). Because the prompt genuinely
+    varies per sample now, this helps even at the default
+    `temperature=0.0`, unlike a strategy that repeats an identical prompt.
     """
 
     score_kind = "rank_position"
@@ -69,6 +85,8 @@ class ListwiseRanker(BaseRanker):
         step_size: int | None = None,
         num_repeat: int = 1,
         max_tokens_per_candidate: int | None = None,
+        insert_rank_score_key: str | None = None,
+        seed: int | None = None,
         item_label: str = "item",
         system_prompt: str | None = None,
         name: str | None = None,
@@ -102,6 +120,10 @@ class ListwiseRanker(BaseRanker):
         self.step_size = step_size
         self.num_repeat = num_repeat
         self.max_tokens_per_candidate = max_tokens_per_candidate
+        self.insert_rank_score_key = insert_rank_score_key
+        self._warned_missing_score_key = False
+        self.seed = seed
+        self._rng = random.Random(seed)
 
     def _build_messages(self, query: str, window: list[Candidate]) -> list[dict]:
         messages = listwise_prefix_messages(query, len(window), self.item_label)
@@ -112,7 +134,14 @@ class ListwiseRanker(BaseRanker):
             text = candidate.text
             if self.max_tokens_per_candidate is not None:
                 text = truncate_to_tokens(text, self.config.model, self.max_tokens_per_candidate)
-            messages.append({"role": "user", "content": f"[{rank}] {text}"})
+            content = f"[{rank}] {format_candidate_text(text)}"
+            if self.insert_rank_score_key is not None:
+                score = (candidate.metadata or {}).get(self.insert_rank_score_key)
+                if score is None:
+                    self._warn_missing_score_key_once()
+                else:
+                    content += f" ({self.insert_rank_score_key}: {score})"
+            messages.append({"role": "user", "content": content})
             messages.append(
                 {"role": "assistant", "content": f"Received {self.item_label} [{rank}]."}
             )
@@ -129,6 +158,15 @@ class ListwiseRanker(BaseRanker):
             }
         )
         return messages
+
+    def _warn_missing_score_key_once(self) -> None:
+        if not self._warned_missing_score_key:
+            logger.warning(
+                "insert_rank_score_key %r missing on one or more candidates; "
+                "omitting the score suffix for those.",
+                self.insert_rank_score_key,
+            )
+            self._warned_missing_score_key = True
 
     def _response_format(self) -> dict | None:
         return structured.listwise_schema() if self.structured_output else None
@@ -165,21 +203,30 @@ class ListwiseRanker(BaseRanker):
         """Return `window` reordered most-to-least relevant to `query`."""
         n = self.num_samples
         response_format = self._response_format()
+        m = len(window)
 
         if n <= 1:
             response = self._call(self._build_messages(query, window), response_format)
-            order = self._parse_permutation(response.text, len(window))
+            order = self._parse_permutation(response.text, m)
             return [window[i] for i in order]
 
-        self._warn_if_low_temperature()
-        batches = [self._build_messages(query, window) for _ in range(n)]
+        # Permutation self-consistency (arXiv:2310.07712): each sample sees
+        # the window in its own random order, cancelling position bias the
+        # way pairwise/setwise already do. `perms[s][shuffled_position]`
+        # holds the *original* window index, so `shuffled_windows[s][k] ==
+        # window[perms[s][k]]` by construction -- that's what makes the
+        # un-shuffle below (`perms[s][shuffled_idx]`) the correct direction
+        # rather than needing an inverse permutation.
+        perms = [self._rng.sample(range(m), m) for _ in range(n)]
+        shuffled_windows = [[window[i] for i in perm] for perm in perms]
+        batches = [self._build_messages(query, shuffled_windows[s]) for s in range(n)]
         responses = self._call_many(batches, response_format)
-        m = len(window)
         points = [0.0] * m
-        for response in responses:
-            order = self._parse_permutation(response.text, m)
-            for position, idx in enumerate(order):
-                points[idx] += m - position
+        for s, response in enumerate(responses):
+            order = self._parse_permutation(response.text, m)  # indices into shuffled_windows[s]
+            for position, shuffled_idx in enumerate(order):
+                original_idx = perms[s][shuffled_idx]
+                points[original_idx] += m - position
         ranked_indices = sorted(range(m), key=lambda i: points[i], reverse=True)
         return [window[i] for i in ranked_indices]
 
