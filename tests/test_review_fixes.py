@@ -209,8 +209,7 @@ def test_tourrank_structured_output_rejects_duplicate_labels(fake_llm):
     ranker = TourRankRanker(
         LLMConfig(model="gpt-4o-mini"),
         group_size=4,
-        advance_per_group=2,
-        num_stages=1,
+        schedule=[2],
         num_tournaments=1,
         structured_output=True,
         seed=0,

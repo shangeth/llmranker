@@ -229,26 +229,39 @@ class SetwiseRanker(BaseRanker):
     # -- bubblesort ------------------------------------------------------
 
     def _bubble_pass(self, query: str, arr: list[Candidate], start: int, end: int) -> None:
-        """Slide `num_child`-sized windows leftward across arr[start:end+1],
-        carrying the winner of each window forward, so the true best of the
-        whole range ends up at `start`."""
-        pos = max(start, end - self.num_child + 1)
+        """Slide a window leftward across arr[start:end+1], carrying the
+        winner of each window forward, so the true best of the whole range
+        ends up at `start`.
+
+        The window holds `num_child + 1` candidates, matching heapsort's
+        parent-plus-children group and the Setwise paper's reference
+        implementation: one slot carries the running winner and `num_child`
+        slots bring in new contenders. Stepping by `num_child` keeps that
+        carried winner in the next window.
+        """
+        window = self.num_child + 1
+        pos = max(start, end - window + 1)
         while True:
-            window_end = min(pos + self.num_child, end + 1)
-            group_indices = list(range(pos, window_end))
-            group = [arr[i] for i in group_indices]
-            winner = self.compare(query, group)
-            winner_pos = next(i for i, c in enumerate(group) if c is winner)
-            winner_index = group_indices[winner_pos]
-            if winner_index != pos:
-                arr[pos], arr[winner_index] = arr[winner_index], arr[pos]
+            group_indices = list(range(pos, min(pos + window, end + 1)))
+            # A one-candidate window has nothing to decide; asking the model
+            # which of a single item is best is a guaranteed-wasted call.
+            if len(group_indices) >= 2:
+                group = [arr[i] for i in group_indices]
+                winner = self.compare(query, group)
+                winner_pos = next(i for i, c in enumerate(group) if c is winner)
+                winner_index = group_indices[winner_pos]
+                if winner_index != pos:
+                    arr[pos], arr[winner_index] = arr[winner_index], arr[pos]
             if pos == start:
                 return
-            pos = max(start, pos - (self.num_child - 1))
+            pos = max(start, pos - self.num_child)
 
     def _bubblesort(self, query: str, arr: list[Candidate], k: int) -> list[Candidate]:
         n = len(arr)
         for i in range(k):
+            # Nothing left to order once one candidate remains unplaced.
+            if n - i < 2:
+                break
             self._bubble_pass(query, arr, i, n - 1)
         return arr[:k]
 

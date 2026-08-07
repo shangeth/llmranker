@@ -41,10 +41,10 @@ underlying research](#citing-the-underlying-research):
 | Strategy | How it works | LLM calls | Notes |
 |---|---|---|---|
 | **Pointwise** | Score each candidate independently (0-10) | `O(n)` | Cheapest, but ignores relative preference between candidates |
-| **Pairwise** | Repeatedly ask "A or B?", sort via heapsort/bubblesort/allpairs | `O(n log n)` to `O(n²)` | Simple, robust comparisons; optional self-consistency bias-checking |
+| **Pairwise** | Repeatedly ask "A or B?", sort via heapsort/bubblesort/allpairs | `O(n log n)` to `O(n²)` | Simple, robust comparisons. `allpairs` is PRP-Allpair: every pair in both orders, ties scored 0.5 |
 | **Setwise** | Ask "which of these `k` is best?", sort via `k`-ary heapsort/bubblesort/insertion | `O(n log n / log k)` | Fewer calls than pairwise for the same sort, longer prompts |
 | **Listwise** | Ask the LLM to output a full ranking of a sliding window at once | `O(n / step)` | Fewest calls, but degrades as window size grows |
-| **TourRank** | Group candidates like a sports tournament, LLM picks winners per group, repeat over several stages and tournament runs, sum points | More calls, ensembled over multiple runs | Most robust to candidate input order; see [TourRank paper](https://arxiv.org/abs/2406.11678) |
+| **TourRank** | Group candidates like a sports tournament, LLM picks winners per group, eliminate over several stages, sum points across independent tournaments | More calls, ensembled over multiple runs | Points don't depend on candidate input order; see [TourRank paper](https://arxiv.org/abs/2406.11678) |
 
 All five are zero-shot: no training data, no fine-tuning, no embeddings.
 You give it a query and a list of candidates, it gives you a ranked list.
@@ -129,9 +129,14 @@ Rough guidance, in order of what to reach for first:
   than just a ranking, or when `n` is large and you can't afford
   comparisons at all.
 - Use **TourRank** when the order `candidates` arrives in is unreliable (or
-  you don't have one) and you want a result that doesn't depend on it. It's
-  more expensive than setwise, but explicitly designed to be robust to
-  input order, unlike listwise's sliding window.
+  you don't have one). The points a candidate earns are a function of the
+  candidate *set* and the seed, not of the order you passed them in --
+  unlike listwise's sliding window, which is quite sensitive to it. Two
+  caveats worth knowing: it's the most expensive strategy here, and
+  candidates that survive exactly the same stages tie on points, with the
+  tie broken by your input order. The default `schedule` follows the
+  paper's 100→50→20→10→5→2 shape so those tie groups stay small; shorten
+  it (e.g. `schedule=[20, 5]`) to trade granularity for cost.
 - If cost is the constraint and your candidate list is long, don't run an
   expensive strategy over everything: cascade a cheap ranker (pointwise) to
   narrow the field, then an expensive one (setwise) to carefully re-rank

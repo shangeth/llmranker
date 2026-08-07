@@ -210,47 +210,49 @@ class PairwiseRanker(BaseRanker):
     # -- allpairs ------------------------------------------------------
 
     def _allpairs(self, query: str, arr: list[Candidate], k: int) -> list[Candidate]:
+        """PRP-Allpair (Qin et al., arXiv:2306.17563).
+
+        Each pair is asked in **both** orders -- the paper's central point,
+        since a single fixed order is exactly the position bias PRP exists
+        to cancel -- and the pair's score is the fraction of calls that
+        favoured each side. With `num_samples=1` that reproduces the
+        paper's scoring exactly: 1 to the winner when both orderings agree,
+        0.5 each when they disagree. Higher `num_samples` repeats both
+        directions, refining the same fractional score.
+
+        Every call is independent of every other, so the whole O(n^2)
+        matrix is dispatched in one `_call_many` and parallelized by
+        `max_concurrency`.
+        """
         pairs = [(arr[i], arr[j]) for i in range(len(arr)) for j in range(i + 1, len(arr))]
-        n = self.num_samples
+        if not pairs:
+            return arr[:k]
+
         response_format = self._response_format()
+        # Both orders, `num_samples` times each.
+        calls_per_pair = 2 * self.num_samples
+        orders: list[tuple[Candidate, Candidate]] = []
+        batches = []
+        for a, b in pairs:
+            for _ in range(self.num_samples):
+                orders.append((a, b))
+                batches.append(self._build_compare_messages(query, a, b))
+                orders.append((b, a))
+                batches.append(self._build_compare_messages(query, b, a))
+        responses = self._call_many(batches, response_format)
 
-        if n <= 1:
-            batches = [self._build_compare_messages(query, a, b) for a, b in pairs]
-            responses = self._call_many(batches, response_format)
-            winners = [self._parse_label(r.text, a, b) for (a, b), r in zip(pairs, responses)]
-        else:
-            # Every pair's n samples are all mutually independent, so
-            # dispatch them all together in one _call_many. This scales the
-            # call count by n but not the wall-clock time under concurrency.
-            orders: list[tuple[Candidate, Candidate]] = []
-            batches = []
-            for a, b in pairs:
-                for _ in range(n):
-                    if self._rng.random() < 0.5:
-                        orders.append((a, b))
-                        batches.append(self._build_compare_messages(query, a, b))
-                    else:
-                        orders.append((b, a))
-                        batches.append(self._build_compare_messages(query, b, a))
-            responses = self._call_many(batches, response_format)
-            winners = []
-            for i, (a, b) in enumerate(pairs):
-                chunk_orders = orders[i * n : (i + 1) * n]
-                chunk_responses = responses[i * n : (i + 1) * n]
-                votes_a = sum(
-                    self._parse_label(r.text, x, y) is a
-                    for (x, y), r in zip(chunk_orders, chunk_responses)
-                )
-                votes_b = n - votes_a
-                if votes_a != votes_b:
-                    winners.append(a if votes_a > votes_b else b)
-                else:
-                    winners.append(a if self._rng.random() < 0.5 else b)
+        # Scores are fractional and keyed by object identity: candidates
+        # sharing an `id` field must still be counted separately.
+        scores = {id(c): 0.0 for c in arr}
+        for i, (a, b) in enumerate(pairs):
+            chunk = slice(i * calls_per_pair, (i + 1) * calls_per_pair)
+            wins_a = sum(
+                self._parse_label(r.text, x, y) is a
+                for (x, y), r in zip(orders[chunk], responses[chunk])
+            )
+            share_a = wins_a / calls_per_pair
+            scores[id(a)] += share_a
+            scores[id(b)] += 1.0 - share_a
 
-        # Keyed by object identity for the same reason as compare()'s votes:
-        # candidates sharing an `id` field must still be counted separately.
-        wins = {id(c): 0 for c in arr}
-        for winner in winners:
-            wins[id(winner)] += 1
-        ranked = sorted(arr, key=lambda c: wins[id(c)], reverse=True)
+        ranked = sorted(arr, key=lambda c: scores[id(c)], reverse=True)
         return ranked[:k]

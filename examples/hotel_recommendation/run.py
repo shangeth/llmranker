@@ -148,7 +148,9 @@ def compare_all_strategies() -> None:
         TourRankRanker(
             LLMConfig(model=MODEL),
             group_size=4,
-            advance_per_group=2,
+            # 7 hotels: two elimination stages, cheap enough for an example.
+            schedule=[4, 2],
+            num_tournaments=3,
             item_label="hotel",
             name="tourrank",
         ),

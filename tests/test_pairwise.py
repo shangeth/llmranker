@@ -78,7 +78,8 @@ def test_pairwise_allpairs_concurrency_matches_sequential(fake_llm, max_concurre
     result = ranker.rank("query", candidates)
 
     assert [c.id for c in result] == ["1", "2", "3", "4", "5"]
-    assert ranker.total_calls == 10  # n*(n-1)/2 for n=5, same regardless of concurrency
+    # PRP-Allpair asks every pair in both orders: 2 * n*(n-1)/2 for n=5.
+    assert ranker.total_calls == 20
 
 
 def test_pairwise_num_samples_matches_unbiased_ground_truth(fake_llm):
@@ -95,7 +96,8 @@ def test_pairwise_num_samples_matches_unbiased_ground_truth(fake_llm):
     result = ranker.rank("query", candidates)
 
     assert [c.id for c in result] == ["1", "2", "3", "4", "5"]
-    assert ranker.total_calls == 30  # n*(n-1)/2 pairs * num_samples
+    # Both orders per pair, num_samples times each: 2 * n*(n-1)/2 * 3.
+    assert ranker.total_calls == 60
 
 
 def _always_b_responder(messages):

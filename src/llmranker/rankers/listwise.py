@@ -28,6 +28,10 @@ class ListwiseRanker(BaseRanker):
     `step_size`: how far the window slides toward the front each step
         (step_size < window_size means adjacent windows overlap, which is
         what lets a candidate's rank improve across multiple windows).
+        Defaults to `window_size // 2`, the relationship RankGPT uses;
+        with the default window of 20 that gives the paper's tuned
+        20/10 configuration. A smaller window costs proportionally
+        more calls for the same list.
     `num_repeat`: how many full passes over the list to make; each pass
         starts from the current (already improved) order. This is a
         different axis from `num_samples` below: `num_repeat` changes the
@@ -61,8 +65,8 @@ class ListwiseRanker(BaseRanker):
     def __init__(
         self,
         config: LLMConfig,
-        window_size: int = 4,
-        step_size: int = 2,
+        window_size: int = 20,
+        step_size: int | None = None,
         num_repeat: int = 1,
         max_tokens_per_candidate: int | None = None,
         item_label: str = "item",
@@ -83,10 +87,17 @@ class ListwiseRanker(BaseRanker):
             num_samples,
             structured_output,
         )
-        if step_size > window_size:
-            raise ValueError("step_size must be <= window_size")
         if window_size < 2:
             raise ValueError("window_size must be >= 2")
+        # RankGPT's step is half its window; deriving it keeps that
+        # relationship when a caller sets only window_size, instead of
+        # colliding a fixed default against a smaller custom window.
+        if step_size is None:
+            step_size = max(1, window_size // 2)
+        if step_size > window_size:
+            raise ValueError("step_size must be <= window_size")
+        if step_size < 1:
+            raise ValueError("step_size must be >= 1")
         self.window_size = window_size
         self.step_size = step_size
         self.num_repeat = num_repeat

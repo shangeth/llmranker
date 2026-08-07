@@ -2,6 +2,47 @@
 
 ## 0.3.0
 
+### Fixed (fidelity to the cited papers)
+
+An audit of each strategy against its source paper and reference
+implementation turned up six divergences.
+
+- **TourRank's ensemble did nothing.** Group membership was a pure function
+  of each candidate's input position, with only a within-group shuffle, so
+  every tournament played out identically and `num_tournaments` just
+  multiplied every score by a constant. Each tournament now draws its own
+  groups from a canonically-ordered, seeded shuffle — which also makes the
+  points a function of the candidate *set* and the seed rather than of the
+  order they were passed in, the property the method is chosen for.
+- **TourRank's defaults defeated the method.** `num_stages=2` with a fixed
+  advance ratio produced 3 distinct score values across 100 candidates (26
+  tied at the top), leaving most of the ranking to the tie-break. Replaced
+  `advance_per_group`/`num_stages` with `schedule`, a list of per-stage
+  survivor counts defaulting to the paper's 100→50→20→10→5→2 shape scaled
+  to the candidate count. `group_size` now defaults to 20 and
+  `num_tournaments` to 10, both the paper's values.
+- **`PairwiseRanker(strategy="allpairs")` was not PRP-Allpair.** It asked
+  each pair once in a fixed order — the position bias PRP exists to cancel.
+  It now asks both orders and scores by the share of calls favouring each
+  side, which reproduces the paper's `1·wins + 0.5·ties` exactly at
+  `num_samples=1`. This doubles the call count for that strategy.
+- **Setwise bubblesort used the wrong window.** It compared `num_child`
+  candidates where the paper's reference implementation uses
+  `num_child + 1` (a slot for the running winner plus `num_child`
+  contenders, the same group heapsort builds). It also emitted
+  single-candidate comparisons at the tail of each pass — an LLM call that
+  cannot return anything.
+- **`ListwiseRanker` defaults were not RankGPT's.** `window_size` was 4 with
+  `step_size` 2; the paper tuned 20/10 on TREC-DL19, so the old defaults
+  cost ~5× the calls in a configuration the paper never evaluated.
+  `step_size` now defaults to `window_size // 2` rather than a fixed
+  number, preserving the paper's relationship when only the window is set.
+- **`CascadeRanker` mis-cited FrugalGPT.** FrugalGPT's LLM cascade routes
+  one query through progressively stronger models behind a confidence gate,
+  so the expensive model is often never called. This is a multi-stage
+  retrieval cascade where both stages always run. Citation corrected; a
+  confidence gate is tracked in ROADMAP.md.
+
 ### Breaking
 
 - **Metric keys renamed** in `RankingMetrics.get_metrics()` (and therefore
@@ -14,6 +55,10 @@
   on `PairwiseRanker`/`SetwiseRanker` caps sorting effort and never drops
   candidates — the same name meaning two different things. `rank()` now
   returns every candidate on every ranker; slice the result for a top-k.
+- **`TourRankRanker(advance_per_group=..., num_stages=...)` replaced by
+  `schedule=[...]`**, and `TourRankRanker.select_group()` now takes an
+  explicit `advance` argument, since the advance count varies per stage.
+  See the fidelity section above.
 - **pandas is no longer a required dependency.** It's only used by
   `compare_rankers`, which now raises a clear `ImportError` pointing at
   `pip install "llmranker[benchmark]"`.

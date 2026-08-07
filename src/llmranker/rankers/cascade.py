@@ -6,7 +6,17 @@ from ..types import Candidate, Ranker
 class CascadeRanker:
     """Cheap-then-expensive tiered ranking: a fast/cheap ranker narrows the
     field, a slower/pricier ranker does a thorough re-rank of just the
-    survivors (FrugalGPT-style cascading, arXiv:2305.05176).
+    survivors.
+
+    This is the classic multi-stage ("telescoping") retrieval cascade,
+    where each stage sees fewer candidates than the last. It is *not*
+    FrugalGPT's LLM cascade (arXiv:2305.05176), which routes the same
+    query through progressively stronger models and uses a confidence
+    score to decide whether to stop early -- there, the expensive model
+    is often never called at all. Here both stages always run; the
+    saving comes from the second one seeing a shorter list. A
+    confidence gate that skips `refine` outright is tracked in
+    ROADMAP.md.
 
     Takes two already-constructed rankers rather than raw `LLMConfig`s, so
     each stage is configured exactly like it would be standalone (its own
