@@ -2,47 +2,6 @@
 
 ## 0.3.0
 
-### Fixed (fidelity to the cited papers)
-
-An audit of each strategy against its source paper and reference
-implementation turned up six divergences.
-
-- **TourRank's ensemble did nothing.** Group membership was a pure function
-  of each candidate's input position, with only a within-group shuffle, so
-  every tournament played out identically and `num_tournaments` just
-  multiplied every score by a constant. Each tournament now draws its own
-  groups from a canonically-ordered, seeded shuffle — which also makes the
-  points a function of the candidate *set* and the seed rather than of the
-  order they were passed in, the property the method is chosen for.
-- **TourRank's defaults defeated the method.** `num_stages=2` with a fixed
-  advance ratio produced 3 distinct score values across 100 candidates (26
-  tied at the top), leaving most of the ranking to the tie-break. Replaced
-  `advance_per_group`/`num_stages` with `schedule`, a list of per-stage
-  survivor counts defaulting to the paper's 100→50→20→10→5→2 shape scaled
-  to the candidate count. `group_size` now defaults to 20 and
-  `num_tournaments` to 10, both the paper's values.
-- **`PairwiseRanker(strategy="allpairs")` was not PRP-Allpair.** It asked
-  each pair once in a fixed order — the position bias PRP exists to cancel.
-  It now asks both orders and scores by the share of calls favouring each
-  side, which reproduces the paper's `1·wins + 0.5·ties` exactly at
-  `num_samples=1`. This doubles the call count for that strategy.
-- **Setwise bubblesort used the wrong window.** It compared `num_child`
-  candidates where the paper's reference implementation uses
-  `num_child + 1` (a slot for the running winner plus `num_child`
-  contenders, the same group heapsort builds). It also emitted
-  single-candidate comparisons at the tail of each pass — an LLM call that
-  cannot return anything.
-- **`ListwiseRanker` defaults were not RankGPT's.** `window_size` was 4 with
-  `step_size` 2; the paper tuned 20/10 on TREC-DL19, so the old defaults
-  cost ~5× the calls in a configuration the paper never evaluated.
-  `step_size` now defaults to `window_size // 2` rather than a fixed
-  number, preserving the paper's relationship when only the window is set.
-- **`CascadeRanker` mis-cited FrugalGPT.** FrugalGPT's LLM cascade routes
-  one query through progressively stronger models behind a confidence gate,
-  so the expensive model is often never called. This is a multi-stage
-  retrieval cascade where both stages always run. Citation corrected; a
-  confidence gate is tracked in ROADMAP.md.
-
 ### Breaking
 
 - **Metric keys renamed** in `RankingMetrics.get_metrics()` (and therefore
@@ -58,7 +17,7 @@ implementation turned up six divergences.
 - **`TourRankRanker(advance_per_group=..., num_stages=...)` replaced by
   `schedule=[...]`**, and `TourRankRanker.select_group()` now takes an
   explicit `advance` argument, since the advance count varies per stage.
-  See the fidelity section above.
+  See the paper-fidelity fixes under Fixed below.
 - **pandas is no longer a required dependency.** It's only used by
   `compare_rankers`, which now raises a clear `ImportError` pointing at
   `pip install "llmranker[benchmark]"`.
@@ -104,9 +63,88 @@ implementation turned up six divergences.
   stderr chatter and the one-liner to silence it, and that small models
   saturate `PointwiseRanker`'s scale (a live run scored five candidates
   `[10, 9, 0, 0, 0]`, and tied scores fall back to input order).
+- `RerankAPIRanker`: ranks with a dedicated rerank model (Cohere, Jina,
+  Bedrock, Azure AI, Infinity) via LiteLLM's rerank endpoint — one request
+  scores the whole candidate list, instead of prompting a chat model and
+  parsing its output. No new dependency; LiteLLM already ships it.
+  Designed as the cheap `narrow` stage of a `CascadeRanker`. It bills per
+  search unit rather than per token, so it reports `total_search_units`,
+  leaves the token counters at 0, and reports its cost as unknown rather
+  than `$0.00`.
+- `llmranker.llm.call_rerank`, plus the `RerankResult` / `RerankResponse`
+  dataclasses it returns: the rerank-endpoint counterpart to `call_llm`,
+  sharing its retry/backoff behavior.
+- `py.typed` marker (PEP 561), so the package's existing annotations are
+  visible to type checkers in downstream projects.
+
+### Changed
+
+- **`max_concurrency` documentation was wrong.** The README and the
+  pairwise/setwise/listwise docstrings said it "genuinely does nothing"
+  for the sequential strategies. It does: with `num_samples > 1` the
+  repeated judgments of a single comparison are dispatched together, on
+  every strategy. Anyone sizing it against a rate limit was misinformed.
+- `estimate_cost`'s docstring claimed it returns `None` for a local Ollama
+  model. It returns `0.0` — LiteLLM resolves those and prices them at
+  zero. `None` means *unknown*, `0.0` means *free*.
+- `call_llm`'s docstring said it retries "up to `max_retries` times";
+  `max_retries` is the total *attempt* count (3 = one call plus two
+  retries).
+- scikit-learn dropped as a dependency (~41 MB, pulled in for a single
+  `mean_absolute_error` call now done with numpy).
+- `compare_rankers` now defers to a ranker's own `estimate_cost_usd()`
+  when it defines one, falling back to the token-based estimate
+  otherwise. This keeps per-token pricing from being applied to rankers
+  that aren't billed that way.
+- `CascadeRanker`'s `narrow`/`refine` params are annotated as the
+  structural `Ranker` protocol rather than `BaseRanker`, which is what
+  they always accepted in practice — needed so a `RerankAPIRanker` can be
+  a stage.
+- `ListwiseRanker` now warns when `num_samples > 1` is combined with
+  `temperature=0.0`, matching `PointwiseRanker`. Unlike pairwise/setwise,
+  listwise sends an identical prompt for every sample, so at temperature 0
+  the repeats were provably wasted spend with no signal to the user.
 
 ### Fixed
 
+An audit of each strategy against its source paper and reference
+implementation turned up the first six divergences below.
+
+- **TourRank's ensemble did nothing.** Group membership was a pure function
+  of each candidate's input position, with only a within-group shuffle, so
+  every tournament played out identically and `num_tournaments` just
+  multiplied every score by a constant. Each tournament now draws its own
+  groups from a canonically-ordered, seeded shuffle — which also makes the
+  points a function of the candidate *set* and the seed rather than of the
+  order they were passed in, the property the method is chosen for.
+- **TourRank's defaults defeated the method.** `num_stages=2` with a fixed
+  advance ratio produced 3 distinct score values across 100 candidates (26
+  tied at the top), leaving most of the ranking to the tie-break. Replaced
+  `advance_per_group`/`num_stages` with `schedule`, a list of per-stage
+  survivor counts defaulting to the paper's 100→50→20→10→5→2 shape scaled
+  to the candidate count. `group_size` now defaults to 20 and
+  `num_tournaments` to 10, both the paper's values.
+- **`PairwiseRanker(strategy="allpairs")` was not PRP-Allpair.** It asked
+  each pair once in a fixed order — the position bias PRP exists to cancel.
+  It now asks both orders and scores by the share of calls favouring each
+  side, which reproduces the paper's `1·wins + 0.5·ties` exactly at
+  `num_samples=1`. This doubles the call count for that strategy.
+- **Setwise bubblesort used the wrong window.** It compared `num_child`
+  candidates where the paper's reference implementation uses
+  `num_child + 1` (a slot for the running winner plus `num_child`
+  contenders, the same group heapsort builds). It also emitted
+  single-candidate comparisons at the tail of each pass — an LLM call that
+  cannot return anything.
+- **`ListwiseRanker` defaults were not RankGPT's.** `window_size` was 4 with
+  `step_size` 2; the paper tuned 20/10 on TREC-DL19, so the old defaults
+  cost ~5× the calls in a configuration the paper never evaluated.
+  `step_size` now defaults to `window_size // 2` rather than a fixed
+  number, preserving the paper's relationship when only the window is set.
+- **`CascadeRanker` mis-cited FrugalGPT.** FrugalGPT's LLM cascade routes
+  one query through progressively stronger models behind a confidence gate,
+  so the expensive model is often never called. This is a multi-stage
+  retrieval cascade where both stages always run. Citation corrected; a
+  confidence gate is tracked in ROADMAP.md.
 - **NDCG could exceed 1.0.** The ideal DCG was computed from
   `true_ranking`'s order, which is only ideal when that order happens to
   be sorted by the caller's `relevance` grades. It's now computed from the
@@ -127,56 +165,6 @@ implementation turned up six divergences.
 - `llmranker` no longer sets `litellm.suppress_debug_info` process-wide at
   import time. Configuring a shared third-party module on behalf of the
   whole host application isn't a library's call to make.
-
-### Changed
-
-- **`max_concurrency` documentation was wrong.** The README and the
-  pairwise/setwise/listwise docstrings said it "genuinely does nothing"
-  for the sequential strategies. It does: with `num_samples > 1` the
-  repeated judgments of a single comparison are dispatched together, on
-  every strategy. Anyone sizing it against a rate limit was misinformed.
-- `estimate_cost`'s docstring claimed it returns `None` for a local Ollama
-  model. It returns `0.0` — LiteLLM resolves those and prices them at
-  zero. `None` means *unknown*, `0.0` means *free*.
-- `call_llm`'s docstring said it retries "up to `max_retries` times";
-  `max_retries` is the total *attempt* count (3 = one call plus two
-  retries).
-- scikit-learn dropped as a dependency (~41 MB, pulled in for a single
-  `mean_absolute_error` call now done with numpy).
-
-### Added (rerank endpoint support)
-
-- `RerankAPIRanker`: ranks with a dedicated rerank model (Cohere, Jina,
-  Bedrock, Azure AI, Infinity) via LiteLLM's rerank endpoint — one request
-  scores the whole candidate list, instead of prompting a chat model and
-  parsing its output. No new dependency; LiteLLM already ships it.
-  Designed as the cheap `narrow` stage of a `CascadeRanker`. It bills per
-  search unit rather than per token, so it reports `total_search_units`,
-  leaves the token counters at 0, and reports its cost as unknown rather
-  than `$0.00`.
-- `llmranker.llm.call_rerank`, plus the `RerankResult` / `RerankResponse`
-  dataclasses it returns: the rerank-endpoint counterpart to `call_llm`,
-  sharing its retry/backoff behavior.
-- `py.typed` marker (PEP 561), so the package's existing annotations are
-  visible to type checkers in downstream projects.
-
-### Changed
-
-- `compare_rankers` now defers to a ranker's own `estimate_cost_usd()`
-  when it defines one, falling back to the token-based estimate
-  otherwise. This keeps per-token pricing from being applied to rankers
-  that aren't billed that way.
-- `CascadeRanker`'s `narrow`/`refine` params are annotated as the
-  structural `Ranker` protocol rather than `BaseRanker`, which is what
-  they always accepted in practice — needed so a `RerankAPIRanker` can be
-  a stage.
-- `ListwiseRanker` now warns when `num_samples > 1` is combined with
-  `temperature=0.0`, matching `PointwiseRanker`. Unlike pairwise/setwise,
-  listwise sends an identical prompt for every sample, so at temperature 0
-  the repeats were provably wasted spend with no signal to the user.
-
-### Fixed
-
 - **Candidates with duplicate `id` values were silently dropped.**
   `PairwiseRanker` and `SetwiseRanker` excluded the unranked remainder by
   `id` field, so a candidate sharing an id with a ranked one disappeared
