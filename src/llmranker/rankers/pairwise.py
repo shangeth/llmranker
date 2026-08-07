@@ -127,11 +127,20 @@ class PairwiseRanker(BaseRanker):
                 orders.append((b, a))
                 batches.append(self._build_compare_messages(query, b, a))
         responses = self._call_many(batches, response_format)
-        votes = {a.id: 0, b.id: 0}
+        # Counted by object identity, not by `id` field: two candidates can
+        # legitimately share an id, and a dict keyed on it would merge their
+        # votes into one bucket.
+        votes_a = 0
         for (x, y), r in zip(orders, responses):
-            winner = self._parse_label(r.text, x, y)
-            votes[winner.id] += 1
-        return a if votes[a.id] >= votes[b.id] else b
+            if self._parse_label(r.text, x, y) is a:
+                votes_a += 1
+        votes_b = n - votes_a
+        if votes_a != votes_b:
+            return a if votes_a > votes_b else b
+        # A split vote (common with even num_samples) must not resolve to
+        # whichever candidate was passed first -- that would reinstate
+        # exactly the position bias num_samples exists to cancel.
+        return a if self._rng.random() < 0.5 else b
 
     def _better(self, query: str, a: Candidate, b: Candidate) -> bool:
         return self.compare(query, a, b) is a
@@ -224,14 +233,20 @@ class PairwiseRanker(BaseRanker):
             for i, (a, b) in enumerate(pairs):
                 chunk_orders = orders[i * n : (i + 1) * n]
                 chunk_responses = responses[i * n : (i + 1) * n]
-                votes = {a.id: 0, b.id: 0}
-                for (x, y), r in zip(chunk_orders, chunk_responses):
-                    winner = self._parse_label(r.text, x, y)
-                    votes[winner.id] += 1
-                winners.append(a if votes[a.id] >= votes[b.id] else b)
+                votes_a = sum(
+                    self._parse_label(r.text, x, y) is a
+                    for (x, y), r in zip(chunk_orders, chunk_responses)
+                )
+                votes_b = n - votes_a
+                if votes_a != votes_b:
+                    winners.append(a if votes_a > votes_b else b)
+                else:
+                    winners.append(a if self._rng.random() < 0.5 else b)
 
-        wins = {c.id: 0 for c in arr}
+        # Keyed by object identity for the same reason as compare()'s votes:
+        # candidates sharing an `id` field must still be counted separately.
+        wins = {id(c): 0 for c in arr}
         for winner in winners:
-            wins[winner.id] += 1
-        ranked = sorted(arr, key=lambda c: wins[c.id], reverse=True)
+            wins[id(winner)] += 1
+        ranked = sorted(arr, key=lambda c: wins[id(c)], reverse=True)
         return ranked[:k]

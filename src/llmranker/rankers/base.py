@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+import threading
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 
 from ..llm import LLMConfig, LLMResponse, call_llm
 from ..types import Candidate
+
+logger = logging.getLogger("llmranker")
 
 
 class BaseRanker(ABC):
@@ -62,15 +66,38 @@ class BaseRanker(ABC):
         self.total_calls = 0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        self._warned_low_temperature = False
 
     def _reset_stats(self) -> None:
         self.total_calls = 0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
 
-    def _call(
-        self, messages: list[dict], response_format: dict | None = None
-    ) -> LLMResponse:
+    def _warn_if_low_temperature(self) -> None:
+        """Warn once when `num_samples > 1` can't possibly help.
+
+        For strategies that send the *same* prompt every sample
+        (PointwiseRanker, ListwiseRanker), `temperature=0` makes every
+        repeat return an identical response, so the extra calls buy
+        nothing. Strategies that reshuffle candidate positions between
+        samples (PairwiseRanker, SetwiseRanker) send genuinely different
+        prompts and do benefit at any temperature, so they don't call this.
+        """
+        if (
+            self.num_samples > 1
+            and self.config.temperature == 0.0
+            and not self._warned_low_temperature
+        ):
+            logger.warning(
+                "num_samples=%d but LLMConfig.temperature=0.0: this strategy "
+                "sends an identical prompt for every sample, so the repeats "
+                "return identical responses and the extra calls don't add "
+                "anything. Set temperature > 0 for num_samples to help.",
+                self.num_samples,
+            )
+            self._warned_low_temperature = True
+
+    def _call(self, messages: list[dict], response_format: dict | None = None) -> LLMResponse:
         self.total_calls += 1
         response = call_llm(messages, self.config, response_format=response_format)
         self.total_prompt_tokens += response.prompt_tokens
@@ -86,22 +113,26 @@ class BaseRanker(ABC):
         Only for strategies where calls don't depend on each other's
         results. Falls back to the plain sequential path when
         `max_concurrency <= 1` or there's nothing to parallelize.
+
+        Usage stats are accumulated per-call inside each worker rather than
+        in bulk afterwards, so that a batch where one call raises still
+        reports what the calls that did succeed actually cost.
         """
         if self.max_concurrency <= 1 or len(message_batches) <= 1:
             return [self._call(m, response_format=response_format) for m in message_batches]
 
-        with ThreadPoolExecutor(max_workers=self.max_concurrency) as pool:
-            responses = list(
-                pool.map(
-                    lambda m: call_llm(m, self.config, response_format=response_format),
-                    message_batches,
-                )
-            )
+        stats_lock = threading.Lock()
 
-        self.total_calls += len(responses)
-        self.total_prompt_tokens += sum(r.prompt_tokens for r in responses)
-        self.total_completion_tokens += sum(r.completion_tokens for r in responses)
-        return responses
+        def run(messages: list[dict]) -> LLMResponse:
+            response = call_llm(messages, self.config, response_format=response_format)
+            with stats_lock:
+                self.total_calls += 1
+                self.total_prompt_tokens += response.prompt_tokens
+                self.total_completion_tokens += response.completion_tokens
+            return response
+
+        with ThreadPoolExecutor(max_workers=self.max_concurrency) as pool:
+            return list(pool.map(run, message_batches))
 
     @staticmethod
     def _finalize(top: list[Candidate], original: list[Candidate]) -> list[Candidate]:
@@ -110,9 +141,16 @@ class BaseRanker(ABC):
 
         Shared by ranking strategies (pairwise, setwise) that only establish
         the order of a top-k subset via comparisons, not a full permutation.
+
+        Membership is tracked by object identity rather than by `id` field:
+        the strategies that call this only ever shuffle the very objects
+        they were handed, and matching on the `id` field would drop *every*
+        candidate sharing an id with a ranked one — silently returning
+        fewer candidates than were passed in when a caller's list contains
+        duplicate ids.
         """
-        top_ids = {c.id for c in top}
-        rest = [c for c in original if c.id not in top_ids]
+        top_ids = {id(c) for c in top}
+        rest = [c for c in original if id(c) not in top_ids]
         ranked = list(top) + rest
         n = len(ranked)
         return [

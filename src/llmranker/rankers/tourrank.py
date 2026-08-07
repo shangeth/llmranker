@@ -123,8 +123,17 @@ class TourRankRanker(BaseRanker):
         labels = self.characters[: len(group)]
         if self.structured_output:
             selected = structured.parse_tourrank_json(text, labels)
-            if selected is not None and len(selected) == self.advance_per_group:
-                return [group[labels.index(label)] for label in selected]
+            if selected is not None:
+                # De-duplicate before the length check: a model can satisfy
+                # the schema's minItems/maxItems with a repeated label
+                # (["A", "A"]), which would otherwise advance one candidate
+                # twice -- awarding it more points than there were stages
+                # and shrinking the survivor pool. Falling short after
+                # de-duplication drops through to the text parser below,
+                # which fills the remaining slots.
+                deduped = list(dict.fromkeys(selected))
+                if len(deduped) == self.advance_per_group:
+                    return [group[labels.index(label)] for label in deduped]
         label_re = re.compile(r"\b(" + "|".join(labels) + r")\b")
         text = extract_final_answer(text)
 

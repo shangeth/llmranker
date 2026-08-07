@@ -156,15 +156,23 @@ class SetwiseRanker(BaseRanker):
             sample_groups.append(shuffled)
         responses = self._call_many(batches, response_format)
 
-        votes = {c.id: 0 for c in candidates}
+        # Votes are indexed by position, not keyed on the `id` field:
+        # candidates sharing an id must be counted as distinct entrants.
+        votes = [0] * len(candidates)
         for group, response in zip(sample_groups, responses):
             winner = self._parse_choice(response.text, group, labels)
-            votes[winner.id] += 1
-        best_count = max(votes.values())
-        for c in candidates:
-            if votes[c.id] == best_count:
-                return c
-        return candidates[0]  # unreachable, satisfies type checkers
+            for i, c in enumerate(candidates):
+                if c is winner:
+                    votes[i] += 1
+                    break
+        best_count = max(votes)
+        tied = [candidates[i] for i, v in enumerate(votes) if v == best_count]
+        if len(tied) == 1:
+            return tied[0]
+        # Resolving a tie by original position would reinstate the position
+        # bias that reshuffling across samples is meant to cancel, so the
+        # same seeded RNG that drives the shuffling breaks the tie too.
+        return self._rng.choice(tied)
 
     def rank(self, query: str, candidates: list[Candidate]) -> list[Candidate]:
         self._reset_stats()

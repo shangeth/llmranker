@@ -143,9 +143,7 @@ def test_cascade_uses_rerank_api_as_the_cheap_narrow_stage(fake_rerank, fake_llm
     # Rerank ranks by descending id; setwise then picks the lowest id in a
     # group, a deliberately opposite criterion, so the assertion can tell
     # the refine stage actually re-decided rather than inheriting.
-    fake_rerank.results = [
-        {"index": i, "relevance_score": float(i)} for i in range(4, -1, -1)
-    ]
+    fake_rerank.results = [{"index": i, "relevance_score": float(i)} for i in range(4, -1, -1)]
 
     def pick_lowest_id(messages):
         entries = re.findall(r'Item ([A-Z]): "item-(\d+)"', messages[-1]["content"])

@@ -47,7 +47,12 @@ class ListwiseRanker(BaseRanker):
     merges the resulting permutations by Borda count (each candidate earns
     `window_size - position` points per sample, summed across samples, then
     sorted descending; ties fall back to the candidates' original order
-    within the window).
+    within the window). Unlike `PairwiseRanker`/`SetwiseRanker`, the prompt
+    is *identical* across samples (there's no position to reshuffle when
+    the model is being asked for a whole permutation), so this only helps
+    at `LLMConfig(temperature=...)` above 0; at the default
+    `temperature=0.0` every repeat returns the same permutation and a
+    warning is logged.
     """
 
     def __init__(
@@ -152,6 +157,7 @@ class ListwiseRanker(BaseRanker):
             order = self._parse_permutation(response.text, len(window))
             return [window[i] for i in order]
 
+        self._warn_if_low_temperature()
         batches = [self._build_messages(query, window) for _ in range(n)]
         responses = self._call_many(batches, response_format)
         m = len(window)

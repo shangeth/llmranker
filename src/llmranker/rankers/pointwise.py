@@ -19,7 +19,24 @@ from .base import BaseRanker
 
 logger = logging.getLogger("llmranker")
 
-_SCORE_RE = re.compile(r"-?\d+(?:\.\d+)?")
+_NUMBER = r"-?\d+(?:\.\d+)?"
+_SCORE_RE = re.compile(_NUMBER)
+_BARE_SCORE_RE = re.compile(rf"^\s*({_NUMBER})\s*$")
+# "score: 8", "score = 8", "Relevance score 8", "scores 8/10", "score of 9".
+# The connector between the word and the number is deliberately narrow, so
+# a "score" mentioned far from the actual number doesn't produce a match.
+_LABELLED_SCORE_RE = re.compile(rf"scores?\b\s*(?:of|is|was)?\s*[:=]?\s*({_NUMBER})", re.IGNORECASE)
+
+
+def _strip_denominators(text: str, max_score: float) -> str:
+    """Remove '/10' and 'out of 10' style denominators before scanning for a
+    number, so '9/10' reads as 9 rather than risking the 10."""
+    for pattern in (
+        rf"\s*/\s*{re.escape(str(int(max_score)))}\b",
+        rf"\s*out\s+of\s+{re.escape(str(int(max_score)))}\b",
+    ):
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+    return text
 
 
 class PointwiseRanker(BaseRanker):
@@ -93,7 +110,6 @@ class PointwiseRanker(BaseRanker):
         )
         self.min_score = min_score
         self.max_score = max_score
-        self._warned_low_temperature = False
 
         if criteria is not None and criteria != "auto" and not isinstance(criteria, dict):
             raise ValueError('criteria must be a dict, "auto", or None')
@@ -121,28 +137,49 @@ class PointwiseRanker(BaseRanker):
         return structured.pointwise_schema() if self.structured_output else None
 
     def _parse_score(self, text: str) -> float:
+        """Pull a numeric score out of the model's response.
+
+        The prompt asks for a bare number, so that's tried first. Failing
+        that, an explicitly labelled score ("score: 8", "scores 8") is
+        preferred over a naked scan, because the first number in a chatty
+        response is often *not* the score (e.g. "Item 3 deserves a 9").
+        Only if neither matches does it fall back to the first number in
+        the text, with denominators stripped so "9/10" reads as 9, and a
+        warning when the text is ambiguous enough that the guess could be
+        wrong.
+        """
         if self.structured_output:
             parsed = structured.parse_pointwise_json(text)
             if parsed is not None:
                 return min(max(parsed, self.min_score), self.max_score)
+
         text = extract_final_answer(text)
-        match = _SCORE_RE.search(text)
-        if match is None:
+
+        bare = _BARE_SCORE_RE.match(text)
+        if bare is not None:
+            return self._clamp(float(bare.group(1)))
+
+        labelled = _LABELLED_SCORE_RE.search(text)
+        if labelled is not None:
+            return self._clamp(float(labelled.group(1)))
+
+        stripped = _strip_denominators(text, self.max_score)
+        numbers = _SCORE_RE.findall(stripped)
+        if not numbers:
             logger.warning("Could not parse a score from output: %r", text)
             return self.min_score
-        value = float(match.group())
-        return min(max(value, self.min_score), self.max_score)
-
-    def _warn_if_low_temperature(self) -> None:
-        low_temp = self.config.temperature == 0.0
-        if self.num_samples > 1 and low_temp and not self._warned_low_temperature:
+        if len(numbers) > 1:
             logger.warning(
-                "num_samples=%d but LLMConfig.temperature=0.0: repeated "
-                "calls will return identical scores, so the extra calls don't "
-                "add anything. Set temperature > 0 for num_samples to help.",
-                self.num_samples,
+                "Ambiguous score output (%d numbers, none labelled): %r. "
+                "Using the first (%s); consider structured_output=True.",
+                len(numbers),
+                text,
+                numbers[0],
             )
-            self._warned_low_temperature = True
+        return self._clamp(float(numbers[0]))
+
+    def _clamp(self, value: float) -> float:
+        return min(max(value, self.min_score), self.max_score)
 
     def _score_holistic(self, query: str, candidate: Candidate) -> float:
         n = self.num_samples
