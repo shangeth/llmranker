@@ -488,7 +488,7 @@ two judged items and return `NaN` there rather than a made-up number.
 | `llmranker.types` | `Candidate(id, text, score, metadata)`, `Ranker` (structural protocol) |
 | `llmranker.llm` | `LLMConfig`, `call_llm`, `call_rerank`, `truncate_to_tokens`, `estimate_cost` |
 | `llmranker.rankers` | `PointwiseRanker`, `PairwiseRanker`, `SetwiseRanker`, `ListwiseRanker`, `TourRankRanker`, `CascadeRanker`; each takes `reasoning`, `num_samples`, `structured_output`. Plus `RerankAPIRanker`, which wraps a dedicated rerank endpoint instead of prompting |
-| `llmranker.metrics` | `RankingMetrics` (NDCG, MRR, MAE, Spearman, Kendall's Tau) |
+| `llmranker.metrics` | `RankingMetrics` (NDCG, reciprocal rank, rank MAE, Spearman, Kendall's Tau) |
 | `llmranker.benchmark` | `compare_rankers` |
 | `llmranker.prompts` | Default prompt templates, plus `extract_final_answer`/`reasoning_suffix` for the `reasoning` flag |
 | `llmranker.structured` | JSON-schema builders/parsers backing `structured_output` |

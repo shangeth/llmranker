@@ -4,13 +4,15 @@
 methods: `PointwiseRanker`, `PairwiseRanker` (heapsort/bubblesort/allpairs),
 `SetwiseRanker` (heapsort/bubblesort/insertion), `ListwiseRanker`, and
 `TourRankRanker` today, plus `CascadeRanker` for composing a cheap ranker
-with an expensive one. Every ranker takes `reasoning`, self-consistency
-via `num_samples`, and `structured_output` params controlling how hard it
-works to get a reliable judgment; `PointwiseRanker` additionally takes a
-`criteria` param for named-sub-criteria scoring (weighted sum,
-priority-hierarchical, or LLM-auto-extracted). Individual strategies are
-grounded in published research, cited in each ranker's docstring and in
-the README.
+with an expensive one and `RerankAPIRanker` for wrapping a dedicated
+rerank endpoint (Cohere, Jina, Bedrock, Azure AI, Infinity) instead of
+prompting a chat model. Every prompting ranker takes `reasoning`,
+self-consistency via `num_samples`, and `structured_output` params
+controlling how hard it works to get a reliable judgment; `PointwiseRanker`
+additionally takes a `criteria` param for named-sub-criteria scoring
+(weighted sum, priority-hierarchical, or LLM-auto-extracted). Individual
+strategies are grounded in published research, cited in each ranker's
+docstring and in the README.
 
 This document tracks what's *not* built yet, found during research into
 what else is out there, and why each item isn't in yet. If you want to pick
@@ -581,10 +583,10 @@ mean anything in practice.
   Exact/Substitute/Complement/Irrelevant labels map cleanly onto graded
   NDCG and would make the product-search example verifiable instead of
   illustrative.
-- **Recommendation metrics.** `RankingMetrics` has NDCG, MRR, MAE,
-  Spearman, Kendall's tau — all search metrics. Recommendation evaluation
-  wants **HR@k / Recall@k**, plus the coverage / exposure / popularity-bias
-  diagnostics motivated by the cold-start entry above.
+- **Recommendation metrics.** `RankingMetrics` has NDCG, reciprocal rank,
+  rank MAE, Spearman, Kendall's tau — all search metrics. Recommendation
+  evaluation wants **HR@k / Recall@k**, plus the coverage / exposure /
+  popularity-bias diagnostics motivated by the cold-start entry above.
 - **LLM-as-judge relevance labels** ([UMBRELA](https://arxiv.org/abs/2406.06519)).
   If you have no ground truth, UMBRELA's zero-shot DNA (Descriptive,
   Narrative, Aspects) prompt produces judgments that correlate highly with
@@ -605,11 +607,6 @@ this space already have and this one doesn't. Several of these gate
 adoption more than any ranking strategy above does, so they're listed with
 that in mind. Ordered by (impact / effort).
 
-- **`py.typed` marker.** The whole package is annotated, `from __future__
-  import annotations` is used consistently, and none of it reaches
-  downstream type checkers because there's no marker file. One empty file
-  in `src/llmranker/` plus a hatch include. Do this first; it costs
-  nothing.
 - **Async.** Every ranker is sync, parallelized with a
   `ThreadPoolExecutor`. LiteLLM already exposes `acompletion`, and
   `rerankers` (the most-adopted package in this space) has had
@@ -624,17 +621,6 @@ that in mind. Ordered by (impact / effort).
   `BaseNodePostprocessor` and a LangChain `BaseDocumentCompressor` are on
   the order of 50 lines each against the existing `rank()` contract, and
   are almost certainly the highest-leverage adoption work available.
-- **Cross-encoder / hosted-reranker support, free from an existing
-  dependency.** LiteLLM ships `litellm.rerank()` — a Cohere-format
-  endpoint covering Cohere, Jina, Bedrock, Azure AI, and Infinity — in the
-  dependency this package *already has*. A `RerankAPIRanker` satisfying
-  the existing `Ranker` protocol is a small wrapper with **no new
-  dependencies**, and it makes `CascadeRanker(narrow=RerankAPIRanker(...),
-  refine=SetwiseRanker(...))` express the standard production pipeline:
-  cheap dedicated reranker narrows, LLM reasons over the survivors. Every
-  other package is either a prompting library *or* a cross-encoder
-  library; none unify the two behind one composable interface, and this
-  one is one file away from doing it.
 - **Batch / multi-query API.** Everything is single-query.
   `rank_batch(queries, candidates_per_query)` sharing one concurrency pool
   matters for anyone running an offline evaluation sweep, which is exactly
@@ -647,18 +633,12 @@ that in mind. Ordered by (impact / effort).
 - **CLI.** `rank-llm` has `rank-llm rerank | evaluate | prompt | serve`.
   Useful for evaluation loops without writing a script; lower priority
   than the library-facing items above.
-- **Evaluation depth, and one naming caveat.** `RankingMetrics` is
-  hand-rolled over five metrics and has no Recall@k, MAP, or per-query
-  aggregation, and `compare_rankers` runs one query at a time with no
-  significance testing. [ranx](https://github.com/AmenRa/ranx) is the bar
-  here (TREC-eval-verified metrics, paired t-tests, LaTeX export, rank
-  fusion) and is MIT — depending on it optionally is probably better than
-  reimplementing it. Separately: `RankingMetrics.mrr` computes the
-  reciprocal rank of `true_ranking[0]` specifically, which is not what
-  "MRR" means to an IR audience (mean over queries of the reciprocal rank
-  of the first *relevant* item). The docstring is honest about it, but the
-  *name* isn't, and anyone comparing numbers against a paper will be
-  misled. Rename or document at the call site.
+- **Evaluation depth.** `RankingMetrics` is hand-rolled over five metrics
+  and has no Recall@k, MAP, or per-query aggregation, and `compare_rankers`
+  runs one query at a time with no significance testing.
+  [ranx](https://github.com/AmenRa/ranx) is the bar here (TREC-eval-verified
+  metrics, paired t-tests, LaTeX export, rank fusion) and is MIT —
+  depending on it optionally is probably better than reimplementing it.
 - **Docs site.** The README is ~460 lines and doing the job of a landing
   page, a tutorial, and an API reference simultaneously. Splitting the
   reference out is deferred maintenance, not a gap yet, but it will be.

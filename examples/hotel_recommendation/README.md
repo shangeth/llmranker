@@ -35,9 +35,9 @@ python run.py
    `SetwiseRanker` and prints the order plus LLM call/token counts.
 2. **Strategy comparison**: runs `PointwiseRanker`, `PairwiseRanker`,
    `SetwiseRanker`, `ListwiseRanker`, and `TourRankRanker` on the same query
-   and reports ranking quality (NDCG, MRR, Spearman, Kendall's Tau against a
-   hand-labeled ground truth), LLM calls, tokens, estimated cost, and
-   latency side by side via `llmranker.compare_rankers`.
+   and reports ranking quality (NDCG, reciprocal rank, Spearman, Kendall's
+   Tau against a hand-labeled ground truth), LLM calls, tokens, estimated
+   cost, and latency side by side via `llmranker.compare_rankers`.
 
 Swap `MODEL` at the top of `run.py` to any [LiteLLM model string](https://docs.litellm.ai/docs/providers)
 to run the same comparison against Gemini, Claude, a local Ollama model, etc.
