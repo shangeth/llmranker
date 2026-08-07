@@ -1,6 +1,7 @@
 import re
 
 import pytest
+from conftest import by_text
 
 from llmranker.llm import LLMConfig
 from llmranker.prompts import FINAL_ANSWER_MARKER
@@ -24,7 +25,11 @@ def _score_responder(score_of):
 
 
 def test_pointwise_sorts_by_score(fake_llm):
-    fake_llm.responses = ["2", "9", "5"]
+    # Keyed by candidate text: PointwiseRanker scores concurrently, so a
+    # positional list would pair responses by thread arrival order.
+    fake_llm.responses = by_text(
+        {"budget hostel": "2", "luxury family resort": "9", "business hotel": "5"}
+    )
     candidates = [
         Candidate(id="a", text="budget hostel"),
         Candidate(id="b", text="luxury family resort"),
@@ -41,7 +46,7 @@ def test_pointwise_sorts_by_score(fake_llm):
 
 
 def test_pointwise_clamps_and_handles_unparseable_output(fake_llm):
-    fake_llm.responses = ["15", "not a number", "-3"]
+    fake_llm.responses = by_text({"item 0": "15", "item 1": "not a number", "item 2": "-3"})
     candidates = [Candidate(id=str(i), text=f"item {i}") for i in range(3)]
     ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"))
     result = ranker.rank("query", candidates)
@@ -279,7 +284,10 @@ def test_pointwise_criteria_auto_extracts_then_scores(fake_llm):
 
 def test_pointwise_criteria_auto_falls_back_to_holistic_on_extraction_failure(fake_llm, caplog):
     candidates = [Candidate(id="a", text="hotel a"), Candidate(id="b", text="hotel b")]
-    fake_llm.responses = ["", "2", "9"]  # extraction unparseable -> holistic fallback
+    # Extraction returns nothing parseable, then each candidate is scored.
+    fake_llm.responses = by_text(
+        {"extract the distinct relevance criteria": "", "hotel a": "2", "hotel b": "9"}
+    )
     ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), criteria="auto")
 
     with caplog.at_level("WARNING"):

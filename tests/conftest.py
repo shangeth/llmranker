@@ -22,6 +22,15 @@ class FakeLLM:
     Set `.responses` to a list (consumed in call order) or a callable
     `(messages, **kwargs) -> str`. Every call is recorded in `.calls`.
 
+    **List mode is consumed in *execution* order, not input order.** For a
+    ranker that dispatches concurrently (PointwiseRanker, PairwiseRanker's
+    "allpairs", anything with num_samples > 1), which prompt receives which
+    response then depends on thread scheduling, so a list is only safe when
+    the assertions don't care about the pairing -- or with
+    `max_concurrency=1`. Use `by_text()` below when they do. The package
+    itself pairs correctly regardless; `_call_many` returns responses in
+    input order (see test_concurrency.py).
+
     Thread-safe: rankers with max_concurrency > 1 call this from multiple
     ThreadPoolExecutor worker threads, so list-mode's index increment (and
     the call log append) are guarded by a lock. The callable mode is safe
@@ -44,6 +53,24 @@ class FakeLLM:
                 content = self.responses[self._index]
                 self._index += 1
         return FakeResponse(content)
+
+
+def by_text(mapping):
+    """Responder that selects a response by matching a substring of the prompt.
+
+    Deterministic under concurrency, unlike a positional list: the pairing
+    follows the prompt's content rather than the order threads happen to
+    reach the fake.
+    """
+
+    def responder(messages):
+        content = messages[-1]["content"]
+        for needle, response in mapping.items():
+            if needle in content:
+                return response
+        raise AssertionError(f"no fake response registered for prompt: {content[:160]!r}")
+
+    return responder
 
 
 @pytest.fixture

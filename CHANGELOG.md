@@ -111,6 +111,13 @@ implementation turned up six divergences.
   `true_ranking`'s order, which is only ideal when that order happens to
   be sorted by the caller's `relevance` grades. It's now computed from the
   grades themselves. (Measured 1.27 before the fix on a realistic input.)
+- Three tests paired fake LLM responses to candidates positionally while
+  the ranker under test dispatched them concurrently, so the pairing
+  depended on thread scheduling. They passed on Python 3.10-3.12 and
+  failed on 3.13, which schedules differently. `tests/conftest.py` gains
+  `by_text()`, which keys responses on prompt content instead. The
+  package was never affected -- `_call_many` returns responses in input
+  order, which `test_concurrency.py` already covers.
 - `spearman` / `kendall_tau` returned a bare `nan` plus an unexplained
   scipy `ConstantInputWarning` for fewer than two judged items. They still
   return `nan` — the statistics are genuinely undefined there — but the
