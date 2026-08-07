@@ -71,6 +71,20 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+  # `llmranker.integrations.*` needs langchain-core/llama-index-core, which
+  # aren't part of `dev` (both are heavy, and most contributors need
+  # neither) -- so those tests are importorskip-guarded and only actually
+  # run here, in an env that installs the two extras on top of `dev`.
+  integrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,langchain,llama-index]"
+      - run: pytest -q
+
   # Catches packaging regressions -- a missing py.typed, a module left out of
   # the wheel -- that an editable install never surfaces.
   build:

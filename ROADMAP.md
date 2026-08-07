@@ -615,12 +615,6 @@ that in mind. Ordered by (impact / effort).
   clean shape is an `arank()` alongside `rank()` with `_call`/`_call_many`
   growing async twins, since every strategy's control flow is already
   expressed in terms of those two methods.
-- **Framework integrations.** `rank-llm` ships inside LlamaIndex,
-  LangChain, and `rerankers`; most people meet a reranker through a
-  framework rather than by picking one directly. A LlamaIndex
-  `BaseNodePostprocessor` and a LangChain `BaseDocumentCompressor` are on
-  the order of 50 lines each against the existing `rank()` contract, and
-  are almost certainly the highest-leverage adoption work available.
 - **Batch / multi-query API.** Everything is single-query.
   `rank_batch(queries, candidates_per_query)` sharing one concurrency pool
   matters for anyone running an offline evaluation sweep, which is exactly

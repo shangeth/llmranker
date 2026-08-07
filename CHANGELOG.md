@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `llmranker.integrations.langchain.LLMRankerCompressor`: wraps any
+  `llmranker` ranker as a LangChain `BaseDocumentCompressor`, so it plugs
+  into `ContextualCompressionRetriever` like Cohere's or RankGPT's
+  rerankers do. Optional dependency: `pip install "llmranker[langchain]"`.
+- `llmranker.integrations.llama_index.LLMRankerPostprocessor`: the same
+  idea for LlamaIndex's `BaseNodePostprocessor`, usable in a query engine's
+  `node_postprocessors`. Optional dependency:
+  `pip install "llmranker[llama-index]"`.
+- Neither adds a required dependency or is imported by `llmranker/__init__.py`
+  — `import llmranker` is unaffected whether or not either extra is
+  installed.
+
 ## 0.3.0
 
 ### Breaking

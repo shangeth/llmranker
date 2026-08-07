@@ -40,6 +40,18 @@ dependencies = [
 benchmark = [
     "pandas>=1.5",
 ]
+# Framework adapters (llmranker.integrations.*). Not part of `dev`: both
+# frameworks are heavy, and most contributors need neither to work on the
+# package itself -- see the `integrations` CI job, which installs these
+# separately.
+langchain = [
+    "langchain-core>=0.3",
+    "pydantic>=2.0",
+]
+llama-index = [
+    "llama-index-core>=0.11",
+    "pydantic>=2.0",
+]
 dev = [
     "llmranker[benchmark]",
     "pytest>=7.4",
@@ -68,6 +80,14 @@ ignore = ["BLE001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+# `integrations/*` needs langchain-core/llama-index-core to execute at all,
+# and those aren't part of `dev` (see the optional-dependencies comment
+# above), so the main test job can't exercise them. Their correctness is
+# instead proven by the separate `integrations` CI job actually running
+# `tests/test_integrations_*.py`, not by the shared coverage floor.
+omit = ["*/integrations/*"]
 
 [tool.mypy]
 python_version = "3.10"

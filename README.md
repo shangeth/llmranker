@@ -400,6 +400,41 @@ If you pass `top_n`, candidates the provider doesn't return are appended
 after the scored ones in their original order with `score=None`, so
 `rank()` never silently drops a candidate.
 
+## Framework integrations (LangChain / LlamaIndex)
+
+Any ranker here can be dropped straight into a LangChain or LlamaIndex RAG
+pipeline, the same way you'd plug in Cohere's or RankGPT's reranker. Both
+adapters wrap an already-constructed ranker rather than an `LLMConfig` —
+they own no ranking logic of their own, just the framework's document/node
+conversion — so anything above (`CascadeRanker`, `reasoning`, `criteria`,
+...) composes normally.
+
+```python
+# LangChain
+from langchain_core.documents import Document
+from llmranker import LLMConfig, SetwiseRanker
+from llmranker.integrations.langchain import LLMRankerCompressor
+
+compressor = LLMRankerCompressor(ranker=SetwiseRanker(LLMConfig(model="gpt-4o-mini")))
+compressor.compress_documents([Document(page_content="...")], query="...")
+```
+
+```python
+# LlamaIndex
+from llmranker import LLMConfig, SetwiseRanker
+from llmranker.integrations.llama_index import LLMRankerPostprocessor
+
+postprocessor = LLMRankerPostprocessor(ranker=SetwiseRanker(LLMConfig(model="gpt-4o-mini")))
+query_engine = index.as_query_engine(node_postprocessors=[postprocessor])
+```
+
+Optional dependencies, not installed by default:
+
+```bash
+pip install "llmranker[langchain]"
+pip install "llmranker[llama-index]"
+```
+
 ## Use case: hotel recommendation
 
 The flagship example lives in
@@ -493,6 +528,7 @@ two judged items and return `NaN` there rather than a made-up number.
 | `llmranker.prompts` | Default prompt templates, plus `extract_final_answer`/`reasoning_suffix` for the `reasoning` flag |
 | `llmranker.structured` | JSON-schema builders/parsers backing `structured_output` |
 | `llmranker.criteria` | `resolve_weights` and text parsers backing `PointwiseRanker`'s `criteria` param |
+| `llmranker.integrations` | `LLMRankerCompressor` (LangChain), `LLMRankerPostprocessor` (LlamaIndex) — optional, see [Framework integrations](#framework-integrations-langchain--llamaindex) |
 
 Every ranker implements `rank(query, candidates) -> list[Candidate]` and
 tracks `total_calls` / `total_prompt_tokens` / `total_completion_tokens`
