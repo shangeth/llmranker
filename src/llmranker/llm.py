@@ -52,6 +52,33 @@ class LLMResponse:
     completion_tokens: int
 
 
+@dataclass
+class RerankResult:
+    """One scored document from a rerank-endpoint response.
+
+    `index` refers back into the `documents` list that was sent, which is
+    how the caller maps a score onto the candidate it came from.
+    """
+
+    index: int
+    relevance_score: float
+
+
+@dataclass
+class RerankResponse:
+    """A rerank endpoint's reply, normalized the way `LLMResponse`
+    normalizes a chat completion.
+
+    `search_units` is what rerank providers actually bill on (roughly: one
+    per query per batch of documents), reported when the provider returns
+    it and `None` otherwise. There are no prompt/completion token counts
+    here because there is no prompt and no completion.
+    """
+
+    results: list[RerankResult]
+    search_units: int | None = None
+
+
 def call_llm(
     messages: list[dict[str, str]],
     config: LLMConfig,
@@ -101,6 +128,79 @@ def call_llm(
         )
 
     return _call()
+
+
+def call_rerank(
+    query: str,
+    documents: list[str],
+    config: LLMConfig,
+    top_n: int | None = None,
+) -> RerankResponse:
+    """Call a dedicated rerank endpoint via LiteLLM, retrying on transient errors.
+
+    This is the cross-encoder/rerank-model counterpart to `call_llm`: a
+    purpose-trained relevance model scores every document against `query`
+    in a single request, rather than a chat model being prompted to reason
+    about them. LiteLLM normalizes these behind the Cohere rerank format,
+    so `config.model` follows the same provider-prefixed convention as
+    everywhere else ("cohere/rerank-v3.5", "jina_ai/jina-reranker-v2-...",
+    "bedrock/...", "azure_ai/...", "infinity/...").
+
+    Retry behavior, and which errors are considered retryable, are shared
+    with `call_llm` — see `RETRYABLE_EXCEPTIONS`. `config.temperature` is
+    ignored: there is no sampling involved in scoring.
+    """
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(max(config.max_retries, 1)),
+        wait=wait_exponential(multiplier=1, min=1, max=20),
+        retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+        before_sleep=lambda retry_state: logger.warning(
+            "Rerank call failed (attempt %d/%d): %s, retrying",
+            retry_state.attempt_number,
+            config.max_retries,
+            retry_state.outcome.exception(),
+        ),
+    )
+    def _call() -> RerankResponse:
+        response = litellm.rerank(
+            model=config.model,
+            query=query,
+            documents=documents,
+            top_n=top_n,
+            api_key=config.api_key,
+            api_base=config.api_base,
+            timeout=config.timeout,
+            **config.extra_kwargs,
+        )
+        raw_results = _get(response, "results") or []
+        results = [
+            RerankResult(
+                index=int(_get(r, "index")),
+                relevance_score=float(_get(r, "relevance_score")),
+            )
+            for r in raw_results
+        ]
+        return RerankResponse(results=results, search_units=_search_units(response))
+
+    return _call()
+
+
+def _get(obj: Any, key: str) -> Any:
+    """Read `key` off a LiteLLM response object that may be a pydantic model
+    or a plain dict, depending on provider and LiteLLM version."""
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _search_units(response: Any) -> int | None:
+    """Pull `meta.billed_units.search_units` out of a rerank response, if the
+    provider reported it. Absent for several providers, so never assume it."""
+    billed = _get(_get(response, "meta"), "billed_units")
+    units = _get(billed, "search_units")
+    return int(units) if units is not None else None
 
 
 def truncate_to_tokens(text: str, model: str, max_tokens: int) -> str:

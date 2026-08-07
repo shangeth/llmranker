@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from ..types import Candidate
-from .base import BaseRanker
+from ..types import Candidate, Ranker
 
 
 class CascadeRanker:
@@ -15,6 +14,11 @@ class CascadeRanker:
     `CascadeRanker` only owns `narrow_to`, how many survive the first
     stage.
 
+    Either stage only has to satisfy the structural `Ranker` protocol, not
+    subclass `BaseRanker` — so the cheap stage can be a
+    `RerankAPIRanker`, turning the whole narrowing step into a single
+    rerank-endpoint request instead of one LLM call per candidate.
+
     Doesn't subclass `BaseRanker`: it has no single `LLMConfig` of its own,
     just two stages that each have theirs. It satisfies the same structural
     `llmranker.types.Ranker` contract instead (`name`, `config`,
@@ -26,8 +30,8 @@ class CascadeRanker:
 
     def __init__(
         self,
-        narrow: BaseRanker,
-        refine: BaseRanker,
+        narrow: Ranker,
+        refine: Ranker,
         narrow_to: int,
         name: str | None = None,
     ):

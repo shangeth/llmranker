@@ -317,6 +317,61 @@ sum both stages, and `ranker.config` reports the `refine` stage's config
 `compare_rankers` (see [Evaluation & benchmarking](#evaluation--benchmarking))
 just like any other ranker.
 
+## Dedicated rerank models (`RerankAPIRanker`)
+
+Every strategy above prompts a general-purpose chat model and parses what
+it writes back. `RerankAPIRanker` does something different: it calls a
+*purpose-trained* relevance model — Cohere Rerank, Jina Reranker, Bedrock,
+Azure AI, Infinity — which scores the entire candidate list in **one
+request**. LiteLLM already normalizes these behind the same
+provider-prefixed model string, so this needs no extra dependency:
+
+```python
+from llmranker import LLMConfig, RerankAPIRanker
+
+ranker = RerankAPIRanker(LLMConfig(model="cohere/rerank-v3.5"))
+result = ranker.rank(query="my search query", candidates=candidates)
+```
+
+The trade-off is the exact inverse of the prompting strategies:
+
+| | Prompting strategies | `RerankAPIRanker` |
+|---|---|---|
+| Calls for 200 candidates | 200 to thousands | **1** |
+| Latency | seconds to minutes | tens of milliseconds |
+| Compositional intent (*"family friendly, near historic sites, not on the beach"*) | handled well | handled poorly — it's a similarity model |
+| Reasoning, multi-criteria, explanations | yes | no |
+
+So it isn't a replacement for the LLM strategies; it's the ideal *cheap
+first stage* for one, where "throw out the obvious junk" is all that's
+being asked:
+
+```python
+from llmranker import CascadeRanker, LLMConfig, RerankAPIRanker, SetwiseRanker
+
+ranker = CascadeRanker(
+    narrow=RerankAPIRanker(LLMConfig(model="cohere/rerank-v3.5")),  # 200 -> 15, one request
+    refine=SetwiseRanker(LLMConfig(model="gpt-4o"), num_child=4),   # careful reasoning over 15
+    narrow_to=15,
+)
+```
+
+Compared to a `PointwiseRanker` narrow stage, that replaces 200 LLM calls
+with a single request before the expensive stage even begins.
+
+**Cost reporting**: rerank endpoints bill per *search unit*, not per
+token, and return no token counts. `total_prompt_tokens` and
+`total_completion_tokens` are therefore always `0`, and `compare_rankers`
+shows a blank (`NaN`) cost rather than a misleading `$0.00` — LiteLLM has
+no pricing table for rerank models. `total_search_units` carries the
+provider's own billing count when it reports one, and `total_calls` is
+always meaningful. `reasoning`, `num_samples`, and `structured_output`
+don't apply here and aren't accepted: nothing is being generated.
+
+If you pass `top_n`, candidates the provider doesn't return are appended
+after the scored ones in their original order with `score=None`, so
+`rank()` never silently drops a candidate.
+
 ## Use case: hotel recommendation
 
 The flagship example lives in
@@ -384,8 +439,8 @@ if you have one, e.g. from human labels or a held-out click log.
 | Module | Contents |
 |---|---|
 | `llmranker.types` | `Candidate(id, text, score, metadata)`, `Ranker` (structural protocol) |
-| `llmranker.llm` | `LLMConfig`, `call_llm`, `truncate_to_tokens`, `estimate_cost` |
-| `llmranker.rankers` | `PointwiseRanker`, `PairwiseRanker`, `SetwiseRanker`, `ListwiseRanker`, `TourRankRanker`, `CascadeRanker`; each takes `reasoning`, `num_samples`, `structured_output` |
+| `llmranker.llm` | `LLMConfig`, `call_llm`, `call_rerank`, `truncate_to_tokens`, `estimate_cost` |
+| `llmranker.rankers` | `PointwiseRanker`, `PairwiseRanker`, `SetwiseRanker`, `ListwiseRanker`, `TourRankRanker`, `CascadeRanker`; each takes `reasoning`, `num_samples`, `structured_output`. Plus `RerankAPIRanker`, which wraps a dedicated rerank endpoint instead of prompting |
 | `llmranker.metrics` | `RankingMetrics` (NDCG, MRR, MAE, Spearman, Kendall's Tau) |
 | `llmranker.benchmark` | `compare_rankers` |
 | `llmranker.prompts` | Default prompt templates, plus `extract_final_answer`/`reasoning_suffix` for the `reasoning` flag |

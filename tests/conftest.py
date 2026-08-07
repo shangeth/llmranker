@@ -51,3 +51,41 @@ def fake_llm(monkeypatch):
     fake = FakeLLM()
     monkeypatch.setattr(litellm, "completion", fake)
     return fake
+
+
+class FakeRerankResponse(dict):
+    """Mimics the subset of litellm's RerankResponse that llmranker.llm.call_rerank
+    reads. A dict rather than a pydantic model on purpose: `call_rerank` has to
+    cope with both shapes across providers/LiteLLM versions, and the dict branch
+    is the one that would otherwise go untested."""
+
+    def __init__(self, results: list[dict], search_units: int | None = None):
+        meta = {"billed_units": {"search_units": search_units}} if search_units is not None else {}
+        super().__init__(id="fake-rerank", results=results, meta=meta)
+
+
+class FakeRerank:
+    """Monkeypatched stand-in for litellm.rerank.
+
+    Set `.results` to a list of `{"index": int, "relevance_score": float}`
+    dicts, or to a callable `(query, documents) -> list[dict]`. Every call is
+    recorded in `.calls`. `.search_units` is reported back in the response
+    meta when set.
+    """
+
+    def __init__(self):
+        self.results = []
+        self.calls = []
+        self.search_units = None
+
+    def __call__(self, model=None, query=None, documents=None, **kwargs):
+        self.calls.append({"model": model, "query": query, "documents": documents, **kwargs})
+        results = self.results(query, documents) if callable(self.results) else self.results
+        return FakeRerankResponse(results, search_units=self.search_units)
+
+
+@pytest.fixture
+def fake_rerank(monkeypatch):
+    fake = FakeRerank()
+    monkeypatch.setattr(litellm, "rerank", fake)
+    return fake

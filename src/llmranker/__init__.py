@@ -1,7 +1,7 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from .benchmark import compare_rankers
-from .llm import LLMConfig, LLMResponse
+from .llm import LLMConfig, LLMResponse, RerankResponse, RerankResult
 from .metrics import RankingMetrics
 from .rankers import (
     BaseRanker,
@@ -9,6 +9,7 @@ from .rankers import (
     ListwiseRanker,
     PairwiseRanker,
     PointwiseRanker,
+    RerankAPIRanker,
     SetwiseRanker,
     TourRankRanker,
 )
@@ -31,6 +32,9 @@ __all__ = [
     "PointwiseRanker",
     "Ranker",
     "RankingMetrics",
+    "RerankAPIRanker",
+    "RerankResponse",
+    "RerankResult",
     "SetwiseRanker",
     "TourRankRanker",
     "compare_rankers",

@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `RerankAPIRanker`: ranks with a dedicated rerank model (Cohere, Jina,
+  Bedrock, Azure AI, Infinity) via LiteLLM's rerank endpoint — one request
+  scores the whole candidate list, instead of prompting a chat model and
+  parsing its output. No new dependency; LiteLLM already ships it.
+  Designed as the cheap `narrow` stage of a `CascadeRanker`. It bills per
+  search unit rather than per token, so it reports `total_search_units`,
+  leaves the token counters at 0, and reports its cost as unknown rather
+  than `$0.00`.
+- `llmranker.llm.call_rerank`, plus the `RerankResult` / `RerankResponse`
+  dataclasses it returns: the rerank-endpoint counterpart to `call_llm`,
+  sharing its retry/backoff behavior.
+- `py.typed` marker (PEP 561), so the package's existing annotations are
+  visible to type checkers in downstream projects.
+
+### Changed
+
+- `compare_rankers` now defers to a ranker's own `estimate_cost_usd()`
+  when it defines one, falling back to the token-based estimate
+  otherwise. This keeps per-token pricing from being applied to rankers
+  that aren't billed that way.
+- `CascadeRanker`'s `narrow`/`refine` params are annotated as the
+  structural `Ranker` protocol rather than `BaseRanker`, which is what
+  they always accepted in practice — needed so a `RerankAPIRanker` can be
+  a stage.
+
 ## 0.2.0
 
 ### Added

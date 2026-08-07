@@ -38,7 +38,15 @@ def compare_rankers(
         prompt_tokens = getattr(ranker, "total_prompt_tokens", 0)
         completion_tokens = getattr(ranker, "total_completion_tokens", 0)
         calls = getattr(ranker, "total_calls", 0)
-        cost = estimate_cost(ranker.config.model, prompt_tokens, completion_tokens)
+        # A ranker may report its own cost when the token-based estimate
+        # doesn't apply to it -- e.g. RerankAPIRanker, which is billed per
+        # search unit and returns no token counts, so the default estimate
+        # would report a misleading $0.00 rather than "unknown".
+        own_estimate = getattr(ranker, "estimate_cost_usd", None)
+        if callable(own_estimate):
+            cost = own_estimate()
+        else:
+            cost = estimate_cost(ranker.config.model, prompt_tokens, completion_tokens)
 
         rows.append(
             {
