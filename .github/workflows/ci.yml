@@ -25,13 +25,19 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check src tests
+        run: ruff check src tests scripts
 
       - name: Check formatting
-        run: ruff format --check src tests
+        run: ruff format --check src tests scripts
 
       - name: Type check
         run: mypy src/llmranker
+
+      # Examples and scripts aren't importable in CI (no API keys), but a
+      # compile check still catches the case that actually bites: a public
+      # API change landing without them being updated.
+      - name: Compile-check examples and scripts
+        run: python -m compileall -q examples scripts
 
       - name: Run tests
         # The package ships no network calls in its test suite (LiteLLM is

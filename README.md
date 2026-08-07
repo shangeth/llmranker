@@ -75,6 +75,18 @@ pip install llmranker
 pip install "llmranker[benchmark]"
 ```
 
+### Quieting LiteLLM
+
+LiteLLM prints provider information to stderr on some calls. `llmranker`
+deliberately does **not** silence it for you, because the switch is
+process-wide state and a library shouldn't reconfigure a shared module on
+your behalf. Opt in yourself if you want quiet output:
+
+```python
+import litellm
+litellm.suppress_debug_info = True
+```
+
 Set whichever provider's API key you're using as an environment variable:
 LiteLLM reads the standard ones automatically (`OPENAI_API_KEY`,
 `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, ...). See [LiteLLM's provider
@@ -127,7 +139,13 @@ Rough guidance, in order of what to reach for first:
 - Use **pointwise** when you need a standalone relevance score per
   candidate (e.g. for thresholding "is this even relevant at all") rather
   than just a ranking, or when `n` is large and you can't afford
-  comparisons at all.
+  comparisons at all. Be aware that smaller models tend to **saturate**
+  the scale rather than spread across it: a live run against a 26B model
+  scored five hotels `[10, 9, 0, 0, 0]`, and those three zeros are a
+  three-way tie that `rank()` resolves by input order (as every ranker
+  here does). If you need the tail of the list ordered and not just the
+  head, that's a reason to prefer a comparison strategy. `reasoning=True`
+  or a larger model both help spread the scores.
 - Use **TourRank** when the order `candidates` arrives in is unreliable (or
   you don't have one). The points a candidate earns are a function of the
   candidate *set* and the seed, not of the order you passed them in --
@@ -529,6 +547,21 @@ pytest
 
 Tests run entirely offline against a fake LiteLLM backend, so no API key
 is needed to contribute.
+
+That also means the suite proves nothing about behavior against a real
+model, so there's a separate manual check for that:
+
+```bash
+python scripts/validate_live.py --check-budget   # no requests spent
+python scripts/validate_live.py                  # full sweep, ~45 requests
+python scripts/validate_live.py --model gpt-4o-mini --only setwise listwise
+```
+
+It runs every strategy against a ranking task with an obvious right
+answer and reports the ordering, call count, and any response that failed
+to parse. It defaults to an OpenRouter free model (50 requests/day, 20 per
+minute), reads `OPENROUTER_API_KEY` from a local `.env`, and takes any
+LiteLLM model string via `--model`.
 
 See [`ROADMAP.md`](https://github.com/shangeth/llmranker/blob/main/ROADMAP.md) for what's researched but not built yet,
 and why.

@@ -79,8 +79,19 @@ implementation turned up six divergences.
   reaches the model as instructions and that nothing here sanitizes it.
 - CI now checks formatting, runs mypy against the shipped annotations,
   enforces a 90% coverage floor, tests against the *minimum* declared
-  dependency versions, and builds/installs the wheel to catch packaging
-  regressions.
+  dependency versions, byte-compiles `examples/` and `scripts/` so a public
+  API change can't land without updating them, and builds/installs the
+  wheel to catch packaging regressions.
+- `scripts/validate_live.py`: runs every strategy against a real provider on
+  a ranking task with an obvious right answer, reporting ordering, call
+  counts and any unparseable response. The test suite is fully offline by
+  design, so nothing in it demonstrates the package works against an actual
+  model; this is that check. Defaults to an OpenRouter free model, takes any
+  LiteLLM model string via `--model`, and has a request budget guard.
+- README notes two behaviors confirmed against a live model: LiteLLM's
+  stderr chatter and the one-liner to silence it, and that small models
+  saturate `PointwiseRanker`'s scale (a live run scored five candidates
+  `[10, 9, 0, 0, 0]`, and tied scores fall back to input order).
 
 ### Fixed
 
