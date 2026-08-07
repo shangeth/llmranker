@@ -47,6 +47,11 @@ class CascadeRanker:
         return self.refine.config
 
     @property
+    def score_kind(self) -> str:
+        """The `refine` stage's, since it produced the returned scores."""
+        return self.refine.score_kind
+
+    @property
     def total_calls(self) -> int:
         return self.narrow.total_calls + self.refine.total_calls
 

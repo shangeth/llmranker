@@ -112,9 +112,7 @@ def test_pairwise_num_samples_cancels_position_bias_statistically(fake_llm):
     # tied to which argument was passed first (unlike a single, undebiased
     # call, which would always resolve to "whichever candidate is b").
     fake_llm.responses = _always_b_responder
-    ranker = PairwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), num_samples=9, seed=7
-    )
+    ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), num_samples=9, seed=7)
 
     first_argument_wins = 0
     trials = 30
@@ -153,9 +151,7 @@ def test_pairwise_structured_output_parses_json_choice(fake_llm):
     fake_llm.responses = ['{"choice": "B"}']
     a = Candidate(id="a", text="hotel a")
     b = Candidate(id="b", text="hotel b")
-    ranker = PairwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), structured_output=True
-    )
+    ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), structured_output=True)
 
     winner = ranker.compare("query", a, b)
     assert winner is b
@@ -166,9 +162,7 @@ def test_pairwise_structured_output_falls_back_to_regex_on_malformed_json(fake_l
     fake_llm.responses = ["not json, but I'll go with B"]
     a = Candidate(id="a", text="hotel a")
     b = Candidate(id="b", text="hotel b")
-    ranker = PairwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), structured_output=True
-    )
+    ranker = PairwiseRanker(LLMConfig(model="gpt-4o-mini"), structured_output=True)
 
     winner = ranker.compare("query", a, b)
     assert winner is b

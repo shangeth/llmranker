@@ -2,12 +2,25 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-
-import pandas as pd
+from typing import TYPE_CHECKING, Any
 
 from .llm import estimate_cost
 from .metrics import RankingMetrics
 from .types import Candidate, Ranker
+
+if TYPE_CHECKING:  # pragma: no cover
+    import pandas as pd
+
+
+def _require_pandas() -> Any:
+    try:
+        import pandas
+    except ImportError as exc:  # pragma: no cover - depends on install extras
+        raise ImportError(
+            "compare_rankers() needs pandas, which is an optional dependency. "
+            'Install it with: pip install "llmranker[benchmark]"'
+        ) from exc
+    return pandas
 
 
 def compare_rankers(
@@ -16,14 +29,20 @@ def compare_rankers(
     candidates: list[Candidate],
     true_ranking: Sequence[str],
     k: int | None = None,
+    relevance: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """Run each ranker over the same (query, candidates) and report ranking
     quality, LLM usage, latency and estimated cost side by side.
 
     `true_ranking` is the ground-truth ordering of candidate ids, best to
-    worst; see `RankingMetrics` for how it's used to score each ranker's
-    predicted order.
+    worst. `relevance`, optional, supplies graded judgments (id -> gain)
+    for NDCG instead of deriving them from `true_ranking`'s order; see
+    `RankingMetrics` for what each reported metric means.
+
+    Requires pandas, which is an optional dependency
+    (`pip install "llmranker[benchmark]"`).
     """
+    pd = _require_pandas()
     metrics_calc = RankingMetrics()
     rows = []
 
@@ -33,7 +52,9 @@ def compare_rankers(
         elapsed = time.perf_counter() - start
 
         predicted_ranking = [c.id for c in result]
-        metrics = metrics_calc.get_metrics(true_ranking, predicted_ranking, k=k)
+        metrics = metrics_calc.get_metrics(
+            true_ranking, predicted_ranking, k=k, relevance=relevance
+        )
 
         prompt_tokens = getattr(ranker, "total_prompt_tokens", 0)
         completion_tokens = getattr(ranker, "total_completion_tokens", 0)

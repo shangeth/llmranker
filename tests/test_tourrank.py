@@ -60,7 +60,10 @@ def test_tourrank_best_and_worst_candidates_get_extreme_points(fake_llm):
     assert {c.id for c in result} == {c.id for c in candidates}
 
 
-def test_tourrank_k_truncates_output_only(fake_llm):
+def test_tourrank_returns_every_candidate_ordered(fake_llm):
+    """rank() returns the whole list on every ranker in this package; a
+    `k` param used to truncate here alone, which made the same name mean
+    something different than it does on pairwise/setwise."""
     candidates = _shuffled_candidates(n=16)
     rank_of = {c.text: int(c.id) for c in candidates}
 
@@ -70,14 +73,15 @@ def test_tourrank_k_truncates_output_only(fake_llm):
         advance_per_group=2,
         num_stages=2,
         num_tournaments=2,
-        k=3,
         seed=1,
     )
     fake_llm.responses = _ground_truth_responder(rank_of, ranker.advance_per_group)
     result = ranker.rank("query", candidates)
 
-    assert len(result) == 3
-    assert "1" in {c.id for c in result}  # true best always makes the cut
+    assert len(result) == len(candidates)
+    # The true best earns full points; it shares that score with the other
+    # candidates that survived every stage, and ties keep input order.
+    assert "1" in {c.id for c in result[:3]}
     assert [c.score for c in result] == sorted((c.score for c in result), reverse=True)
 
 

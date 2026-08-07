@@ -44,9 +44,10 @@ class SetwiseRanker(BaseRanker):
 
     All strategies are sequential comparison sorts: each comparison's
     outcome determines what gets compared next, so unlike PointwiseRanker
-    or PairwiseRanker's "allpairs" strategy, `max_concurrency` has **no
-    effect** here. It's accepted for constructor-signature consistency with
-    the other rankers only.
+    or PairwiseRanker's "allpairs" strategy, `max_concurrency` does **not**
+    parallelize the comparisons. It is still used when `num_samples > 1`,
+    where the repeated judgments of a *single* comparison are independent
+    and dispatched together.
 
     `num_samples > 1`: each group comparison reshuffles the
     candidate-to-label assignment per sample and decides the winner by
@@ -56,6 +57,8 @@ class SetwiseRanker(BaseRanker):
     comparison instead of 1. `seed` makes the shuffling reproducible across
     a `rank()` call.
     """
+
+    score_kind = "rank_position"
 
     def __init__(
         self,

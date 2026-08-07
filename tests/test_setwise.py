@@ -73,9 +73,7 @@ def test_setwise_reasoning_ignores_stray_label_before_final_answer(fake_llm):
     )
     fake_llm.responses = [text]
     group = [Candidate(id=str(i), text=f"hotel {i}") for i in range(4)]
-    ranker = SetwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), num_child=4, reasoning=True
-    )
+    ranker = SetwiseRanker(LLMConfig(model="gpt-4o-mini"), num_child=4, reasoning=True)
 
     winner = ranker.compare("query", group)
     assert winner is group[2]
@@ -157,9 +155,7 @@ def test_setwise_num_samples_cancels_position_bias_statistically(fake_llm):
     # the winner across many independent groups should no longer be
     # systematically tied to original group position.
     fake_llm.responses = _always_first_label_responder
-    ranker = SetwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), num_child=3, num_samples=9, seed=3
-    )
+    ranker = SetwiseRanker(LLMConfig(model="gpt-4o-mini"), num_child=3, num_samples=9, seed=3)
 
     first_slot_wins = 0
     trials = 30
@@ -174,9 +170,7 @@ def test_setwise_num_samples_cancels_position_bias_statistically(fake_llm):
 def test_setwise_structured_output_parses_json_choice(fake_llm):
     fake_llm.responses = ['{"choice": "C"}']
     group = [Candidate(id=str(i), text=f"hotel {i}") for i in range(4)]
-    ranker = SetwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), num_child=3, structured_output=True
-    )
+    ranker = SetwiseRanker(LLMConfig(model="gpt-4o-mini"), num_child=3, structured_output=True)
 
     winner = ranker.compare("query", group)
     assert winner is group[2]
@@ -186,9 +180,7 @@ def test_setwise_structured_output_parses_json_choice(fake_llm):
 def test_setwise_structured_output_falls_back_to_regex_on_malformed_json(fake_llm):
     fake_llm.responses = ["not json, going with C"]
     group = [Candidate(id=str(i), text=f"hotel {i}") for i in range(4)]
-    ranker = SetwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), num_child=3, structured_output=True
-    )
+    ranker = SetwiseRanker(LLMConfig(model="gpt-4o-mini"), num_child=3, structured_output=True)
 
     winner = ranker.compare("query", group)
     assert winner is group[2]

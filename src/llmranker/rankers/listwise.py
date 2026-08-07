@@ -6,7 +6,7 @@ import re
 from .. import structured
 from ..llm import LLMConfig, truncate_to_tokens
 from ..prompts import extract_final_answer, listwise_post_prompt, listwise_prefix_messages
-from ..types import Candidate
+from ..types import Candidate, copy_metadata
 from .base import BaseRanker
 
 logger = logging.getLogger("llmranker")
@@ -39,9 +39,10 @@ class ListwiseRanker(BaseRanker):
         documents or small-context models). Off by default.
 
     Every window's call depends on the previous window's output, so this
-    strategy is inherently sequential: `max_concurrency` has **no
-    effect** here. It's accepted for constructor-signature consistency with
-    the other rankers only.
+    strategy is inherently sequential: `max_concurrency` does **not**
+    parallelize the windows. It is still used when `num_samples > 1`, where
+    the repeated judgments of a *single* window are independent and
+    dispatched together.
 
     `num_samples > 1`: asks the same window `num_samples` times and
     merges the resulting permutations by Borda count (each candidate earns
@@ -54,6 +55,8 @@ class ListwiseRanker(BaseRanker):
     `temperature=0.0` every repeat returns the same permutation and a
     warning is logged.
     """
+
+    score_kind = "rank_position"
 
     def __init__(
         self,
@@ -187,6 +190,6 @@ class ListwiseRanker(BaseRanker):
                 start = max(0, end - self.window_size)
 
         return [
-            Candidate(id=c.id, text=c.text, score=float(n - i), metadata=c.metadata)
+            Candidate(id=c.id, text=c.text, score=float(n - i), metadata=copy_metadata(c.metadata))
             for i, c in enumerate(arr)
         ]

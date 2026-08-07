@@ -6,6 +6,17 @@ from typing import Any, Protocol, runtime_checkable
 from .llm import LLMConfig
 
 
+def copy_metadata(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Shallow-copy a candidate's metadata for an output candidate.
+
+    Rankers build new `Candidate` objects for their results; without this
+    the new object would share the caller's dict, so mutating one would
+    silently mutate the other. Shallow is deliberate -- nested values are
+    still shared, which is the usual dataclass convention.
+    """
+    return dict(metadata) if metadata is not None else None
+
+
 @dataclass
 class Candidate:
     """A single item to be ranked against a query.
@@ -33,6 +44,7 @@ class Ranker(Protocol):
 
     name: str
     config: LLMConfig
+    score_kind: str
     total_calls: int
     total_prompt_tokens: int
     total_completion_tokens: int

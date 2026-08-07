@@ -245,3 +245,124 @@ def test_call_many_records_stats_for_calls_that_succeeded(fake_llm):
 
     assert ranker.total_calls > 0
     assert ranker.total_prompt_tokens == 10 * ranker.total_calls
+
+
+# --- metrics: NDCG must stay normalized, and graded relevance must reach it ---
+
+
+def test_ndcg_never_exceeds_one_with_graded_relevance():
+    """IDCG used to be dcg(true_ranking), which is only ideal if the caller
+    happened to sort true_ranking by their own grades. When they didn't, the
+    'normalized' score came out above 1."""
+    from llmranker.metrics import RankingMetrics
+
+    relevance = {"a": 3.0, "b": 1.0, "c": 2.0}
+    m = RankingMetrics()
+    # every ordering of true_ranking, including ones not sorted by grade
+    for true in (["b", "c", "a"], ["a", "c", "b"], ["c", "a", "b"]):
+        for pred in (["a", "c", "b"], ["b", "a", "c"], ["c", "b", "a"]):
+            score = m.ndcg(true, pred, relevance=relevance)
+            assert 0.0 <= score <= 1.0, f"ndcg={score} for true={true} pred={pred}"
+    # the best possible prediction scores exactly 1
+    assert m.ndcg(["b", "c", "a"], ["a", "c", "b"], relevance=relevance) == pytest.approx(1.0)
+
+
+def test_graded_relevance_reaches_get_metrics_and_compare_rankers(fake_llm):
+    """`relevance` was documented but unreachable: get_metrics didn't accept
+    it, and compare_rankers goes through get_metrics."""
+    from llmranker.benchmark import compare_rankers
+    from llmranker.metrics import RankingMetrics
+
+    relevance = {"a": 3.0, "b": 0.0, "c": 1.0}
+    graded = RankingMetrics().get_metrics(["a", "b", "c"], ["b", "a", "c"], relevance=relevance)
+    ordered = RankingMetrics().get_metrics(["a", "b", "c"], ["b", "a", "c"])
+    assert graded["ndcg"] != ordered["ndcg"], "relevance= had no effect"
+
+    fake_llm.responses = lambda m: "5"
+    report = compare_rankers(
+        [PointwiseRanker(LLMConfig(model="gpt-4o-mini"))],
+        "q",
+        [Candidate(id=i, text=i) for i in ("a", "b", "c")],
+        true_ranking=["a", "b", "c"],
+        relevance=relevance,
+    )
+    assert 0.0 <= report.loc[0, "ndcg"] <= 1.0
+
+
+def test_degenerate_correlations_are_nan_without_scipy_warnings(recwarn):
+    from llmranker.metrics import RankingMetrics
+
+    result = RankingMetrics().get_metrics(["a"], ["a"])
+    assert result["spearman"] != result["spearman"]  # NaN
+    assert result["kendall_tau"] != result["kendall_tau"]
+    assert not [w for w in recwarn if "onstant" in str(w.message)]
+
+
+# --- output contracts -------------------------------------------------------
+
+
+def test_every_ranker_returns_all_candidates(fake_llm):
+    """`k`/`top_n` cap sorting effort; they never drop candidates. TourRank
+    used to truncate, making the same param name mean something different."""
+    from llmranker.rankers.tourrank import TourRankRanker
+
+    candidates = [Candidate(id=str(i), text=f"item-{i}") for i in range(6)]
+    rankers = [
+        PointwiseRanker(LLMConfig(model="m")),
+        PairwiseRanker(LLMConfig(model="m"), k=2),
+        SetwiseRanker(LLMConfig(model="m"), num_child=3, k=2),
+        ListwiseRanker(LLMConfig(model="m"), window_size=3),
+        TourRankRanker(LLMConfig(model="m"), num_tournaments=1),
+    ]
+    for ranker in rankers:
+        fake_llm.responses = lambda m: "5 A B [1] > [2] > [3]"
+        assert len(ranker.rank("q", candidates)) == 6, ranker.name
+
+
+def test_score_kind_declares_how_to_read_score():
+    from llmranker.rankers.cascade import CascadeRanker
+    from llmranker.rankers.rerank_api import RerankAPIRanker
+    from llmranker.rankers.tourrank import TourRankRanker
+
+    assert PointwiseRanker(LLMConfig(model="m")).score_kind == "relevance"
+    assert PairwiseRanker(LLMConfig(model="m")).score_kind == "rank_position"
+    assert SetwiseRanker(LLMConfig(model="m")).score_kind == "rank_position"
+    assert ListwiseRanker(LLMConfig(model="m")).score_kind == "rank_position"
+    assert TourRankRanker(LLMConfig(model="m")).score_kind == "tournament_points"
+    assert RerankAPIRanker(LLMConfig(model="cohere/rerank-v3.5")).score_kind == "provider_relevance"
+    # a cascade reports whichever stage actually produced the scores
+    cascade = CascadeRanker(
+        narrow=PointwiseRanker(LLMConfig(model="m")),
+        refine=SetwiseRanker(LLMConfig(model="m")),
+        narrow_to=2,
+    )
+    assert cascade.score_kind == "rank_position"
+
+
+def test_output_metadata_does_not_alias_the_input(fake_llm):
+    """Output candidates used to share the caller's metadata dict, so
+    mutating one silently mutated the other."""
+    fake_llm.responses = lambda m: "5"
+    original = {"url": "http://example.com"}
+    candidates = [Candidate(id="1", text="t", metadata=original)]
+
+    result = PointwiseRanker(LLMConfig(model="m")).rank("q", candidates)
+
+    assert result[0].metadata == original
+    assert result[0].metadata is not original
+    result[0].metadata["url"] = "mutated"
+    assert original["url"] == "http://example.com"
+
+
+def test_importing_llmranker_does_not_mutate_litellm_globals():
+    """A library must not reconfigure a shared third-party module for the
+    whole host process at import time."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import litellm; before = litellm.suppress_debug_info; "
+        "import llmranker; print(before == litellm.suppress_debug_info)"
+    )
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=False)
+    assert out.stdout.strip() == "True", out.stderr

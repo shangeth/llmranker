@@ -10,8 +10,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
@@ -26,5 +27,50 @@ jobs:
       - name: Lint
         run: ruff check src tests
 
+      - name: Check formatting
+        run: ruff format --check src tests
+
+      - name: Type check
+        run: mypy src/llmranker
+
       - name: Run tests
-        run: pytest --cov=llmranker --cov-report=term-missing
+        # The package ships no network calls in its test suite (LiteLLM is
+        # faked), so a coverage floor is cheap to enforce and catches whole
+        # code paths going untested.
+        run: pytest --cov=llmranker --cov-report=term-missing --cov-fail-under=90
+
+  # The declared floor in pyproject.toml is only meaningful if something
+  # actually installs it; the matrix above always resolves to the newest.
+  minimum-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install with oldest supported dependencies
+        run: |
+          pip install -e ".[dev]"
+          pip install "litellm==1.40.0" "tenacity==8.2.0" "numpy==1.23.*" "scipy==1.9.*" "pandas==1.5.*"
+      - name: Run tests
+        run: pytest -q
+
+  # Catches packaging regressions -- a missing py.typed, a module left out of
+  # the wheel -- that an editable install never surfaces.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel and sdist
+        run: |
+          pip install build twine
+          python -m build
+      - name: Check package metadata
+        run: twine check dist/*
+      - name: Verify the built wheel imports and ships its type marker
+        run: |
+          pip install dist/*.whl
+          python -c "import llmranker, pathlib, sys; p = pathlib.Path(llmranker.__file__).parent / 'py.typed'; sys.exit(0 if p.is_file() else 'py.typed missing from wheel')"

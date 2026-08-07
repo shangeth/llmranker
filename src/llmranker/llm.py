@@ -14,8 +14,6 @@ from tenacity import (
 
 logger = logging.getLogger("llmranker")
 
-litellm.suppress_debug_info = True
-
 # Transient, worth retrying. Auth/bad-request errors are not in this list on
 # purpose: retrying a request that will never succeed just burns quota.
 RETRYABLE_EXCEPTIONS = (
@@ -79,6 +77,19 @@ class RerankResponse:
     search_units: int | None = None
 
 
+def _log_retry(retry_state: Any, config: LLMConfig, kind: str) -> None:
+    """Shared `before_sleep` hook. `retry_state.outcome` is typed Optional
+    by tenacity even though it is always set by the time this runs."""
+    outcome = retry_state.outcome
+    logger.warning(
+        "%s call failed (attempt %d/%d): %s, retrying",
+        kind,
+        retry_state.attempt_number,
+        config.max_retries,
+        outcome.exception() if outcome is not None else None,
+    )
+
+
 def call_llm(
     messages: list[dict[str, str]],
     config: LLMConfig,
@@ -86,7 +97,8 @@ def call_llm(
 ) -> LLMResponse:
     """Call the configured LLM via LiteLLM, retrying on transient errors.
 
-    Retries with exponential backoff up to `config.max_retries` times on
+    Makes up to `config.max_retries` *attempts* in total (so the default
+    of 3 means one call plus two retries), backing off exponentially on
     rate limits / connection / timeout / server errors, then re-raises.
     Non-retryable errors (auth, bad request, ...) propagate immediately.
 
@@ -100,12 +112,7 @@ def call_llm(
         stop=stop_after_attempt(max(config.max_retries, 1)),
         wait=wait_exponential(multiplier=1, min=1, max=20),
         retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
-        before_sleep=lambda retry_state: logger.warning(
-            "LLM call failed (attempt %d/%d): %s, retrying",
-            retry_state.attempt_number,
-            config.max_retries,
-            retry_state.outcome.exception(),
-        ),
+        before_sleep=lambda retry_state: _log_retry(retry_state, config, "LLM"),
     )
     def _call() -> LLMResponse:
         kwargs = dict(config.extra_kwargs)
@@ -156,12 +163,7 @@ def call_rerank(
         stop=stop_after_attempt(max(config.max_retries, 1)),
         wait=wait_exponential(multiplier=1, min=1, max=20),
         retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
-        before_sleep=lambda retry_state: logger.warning(
-            "Rerank call failed (attempt %d/%d): %s, retrying",
-            retry_state.attempt_number,
-            config.max_retries,
-            retry_state.outcome.exception(),
-        ),
+        before_sleep=lambda retry_state: _log_retry(retry_state, config, "Rerank"),
     )
     def _call() -> RerankResponse:
         response = litellm.rerank(
@@ -232,8 +234,10 @@ def truncate_to_tokens(text: str, model: str, max_tokens: int) -> str:
 def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
     """Estimate USD cost for the given token usage.
 
-    Returns None if LiteLLM has no pricing data for `model` (e.g. a local
-    Ollama model) rather than guessing.
+    Returns None only when LiteLLM cannot resolve `model` at all, rather
+    than guessing a price. Note that a resolvable model LiteLLM prices at
+    zero -- a local Ollama model, for instance -- correctly returns 0.0,
+    not None; None means *unknown*, 0.0 means *free*.
     """
     try:
         prompt_cost, completion_cost = litellm.cost_per_token(

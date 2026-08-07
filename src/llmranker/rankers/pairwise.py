@@ -24,7 +24,9 @@ class PairwiseRanker(BaseRanker):
     `strategy`:
       - "heapsort": build a max-heap, pop the top `k`. O(n + k log n) comparisons,
         run sequentially: each comparison's outcome determines the next one,
-        so `max_concurrency` has no effect here.
+        so `max_concurrency` only parallelizes the repeats within a single
+        comparison when `num_samples > 1` (see below), not the comparisons
+        themselves.
       - "bubblesort": k bubble passes, each moving the best remaining candidate
         to the front. O(n * k) comparisons, also sequential for the same reason.
       - "allpairs": every candidate compared against every other once, ranked
@@ -47,6 +49,8 @@ class PairwiseRanker(BaseRanker):
     slot. Costs `num_samples` calls per comparison instead of 1. `seed`
     makes the position randomization reproducible across a `rank()` call.
     """
+
+    score_kind = "rank_position"
 
     def __init__(
         self,

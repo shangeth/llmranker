@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 
 from ..llm import LLMConfig, LLMResponse, call_llm
-from ..types import Candidate
+from ..types import Candidate, copy_metadata
 
 logger = logging.getLogger("llmranker")
 
@@ -33,7 +33,13 @@ class BaseRanker(ABC):
     both be enabled: reasoning needs free text ending in a final-answer
     marker, while structured_output needs the entire completion to be the
     JSON payload, leaving no room for reasoning text.
+
+    `score_kind` tells callers how to read `Candidate.score` on the
+    result, since it means different things per strategy. Subclasses
+    override it; see `llmranker.types.Ranker`.
     """
+
+    score_kind = "rank_position"
 
     def __init__(
         self,
@@ -154,7 +160,7 @@ class BaseRanker(ABC):
         ranked = list(top) + rest
         n = len(ranked)
         return [
-            Candidate(id=c.id, text=c.text, score=float(n - i), metadata=c.metadata)
+            Candidate(id=c.id, text=c.text, score=float(n - i), metadata=copy_metadata(c.metadata))
             for i, c in enumerate(ranked)
         ]
 

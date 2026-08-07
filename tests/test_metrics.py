@@ -13,8 +13,8 @@ def test_perfect_prediction_scores_maximally(metrics):
     result = metrics.get_metrics(true_ranking, true_ranking)
 
     assert result["ndcg"] == pytest.approx(1.0)
-    assert result["mrr"] == pytest.approx(1.0)
-    assert result["mae"] == pytest.approx(0.0)
+    assert result["reciprocal_rank"] == pytest.approx(1.0)
+    assert result["rank_mae"] == pytest.approx(0.0)
     assert result["spearman"] == pytest.approx(1.0)
     assert result["kendall_tau"] == pytest.approx(1.0)
 
@@ -25,10 +25,10 @@ def test_reversed_prediction_scores_poorly(metrics):
     result = metrics.get_metrics(true_ranking, reversed_ranking)
 
     assert 0 < result["ndcg"] < 1.0
-    assert result["mrr"] == pytest.approx(1 / 4)  # "a" ends up last
+    assert result["reciprocal_rank"] == pytest.approx(1 / 4)  # "a" ends up last
     assert result["spearman"] == pytest.approx(-1.0)
     assert result["kendall_tau"] == pytest.approx(-1.0)
-    assert result["mae"] > 0
+    assert result["rank_mae"] > 0
 
 
 def test_ndcg_respects_k(metrics):
@@ -39,7 +39,7 @@ def test_ndcg_respects_k(metrics):
     assert metrics.ndcg(true_ranking, predicted, k=None) < 1.0
 
 
-def test_mrr_zero_when_top_item_missing(metrics):
+def test_reciprocal_rank_zero_when_top_item_missing(metrics):
     true_ranking = ["a", "b", "c"]
     predicted = ["b", "c"]  # "a" never shows up
-    assert metrics.mrr(true_ranking, predicted) == 0.0
+    assert metrics.reciprocal_rank(true_ranking, predicted) == 0.0

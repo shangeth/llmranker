@@ -53,9 +53,7 @@ def test_listwise_reasoning_ignores_stray_numbers_before_final_answer(fake_llm):
     )
     fake_llm.responses = [text]
 
-    ranker = ListwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), window_size=3, reasoning=True
-    )
+    ranker = ListwiseRanker(LLMConfig(model="gpt-4o-mini"), window_size=3, reasoning=True)
     reordered = ranker.compare("query", window)
 
     assert [c.id for c in reordered] == ["2", "0", "1"]
@@ -106,9 +104,7 @@ def test_listwise_num_samples_borda_counts_across_samples(fake_llm):
     # though one sample disagrees.
     fake_llm.responses = ["[1] > [2] > [3]", "[2] > [1] > [3]", "[1] > [2] > [3]"]
 
-    ranker = ListwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), window_size=3, num_samples=3
-    )
+    ranker = ListwiseRanker(LLMConfig(model="gpt-4o-mini"), window_size=3, num_samples=3)
     reordered = ranker.compare("query", window)
 
     assert [c.id for c in reordered] == ["p", "q", "r"]

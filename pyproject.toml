@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmranker"
-version = "0.2.0"
+version = "0.3.0"
 description = "LLM-based ranking and reasoning algorithms for search and recommendation"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     { name = "Shangeth Rajaa" },
 ]
@@ -18,27 +18,34 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Text Processing :: Indexing",
+    "Typing :: Typed",
 ]
+# Deliberately light: no torch, no Java, no scikit-learn. numpy/scipy are
+# the only numeric deps, both needed by llmranker.metrics; pandas is an
+# extra because only compare_rankers() uses it.
 dependencies = [
     "litellm>=1.40.0",
     "tenacity>=8.2.0",
     "numpy>=1.23",
     "scipy>=1.9",
-    "scikit-learn>=1.1",
-    "pandas>=1.5",
 ]
 
 [project.optional-dependencies]
+benchmark = [
+    "pandas>=1.5",
+]
 dev = [
+    "llmranker[benchmark]",
     "pytest>=7.4",
     "pytest-cov>=4.1",
     "ruff>=0.4",
+    "mypy>=1.8",
 ]
 
 [project.urls]
@@ -51,7 +58,7 @@ packages = ["src/llmranker"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 # BLE001 (blind except Exception) is disabled: llm.py's tokenizer/pricing
@@ -61,3 +68,11 @@ ignore = ["BLE001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/llmranker"]
+# LiteLLM, scipy and friends ship partial or absent stubs; this keeps the
+# check focused on our own annotations rather than third-party gaps.
+ignore_missing_imports = true
+warn_unused_ignores = true

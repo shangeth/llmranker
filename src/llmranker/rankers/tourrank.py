@@ -8,7 +8,7 @@ import re
 from .. import structured
 from ..llm import LLMConfig
 from ..prompts import extract_final_answer, tourrank_group_user_prompt, tourrank_system_prompt
-from ..types import Candidate
+from ..types import Candidate, copy_metadata
 from .base import BaseRanker
 
 logger = logging.getLogger("llmranker")
@@ -41,11 +41,12 @@ class TourRankRanker(BaseRanker):
     Stages within a tournament, and separate tournament runs, are
     sequential.
 
-    `k`: optional, purely truncates the *output* to the top `k` by points.
-    Unlike `PairwiseRanker`/`SetwiseRanker` heapsort, this does **not**
-    reduce LLM calls: every group in every stage of every tournament
-    still runs, since the points system needs the full tournament to be
-    meaningful.
+    Like every ranker here, `rank()` returns **every** candidate it was
+    given, ordered; slice the result yourself for a top-k. (A `k`
+    parameter used to truncate the output, which made `k` mean something
+    different here than on `PairwiseRanker`/`SetwiseRanker`, where it
+    caps sorting *effort* and never drops candidates. It was removed
+    rather than left as a same-named, different-meaning knob.)
 
     Ties in final points are broken by each candidate's original position
     in `candidates` (stable sort).
@@ -57,6 +58,8 @@ class TourRankRanker(BaseRanker):
     `num_tournaments` instead.
     """
 
+    score_kind = "tournament_points"
+
     def __init__(
         self,
         config: LLMConfig,
@@ -64,7 +67,6 @@ class TourRankRanker(BaseRanker):
         advance_per_group: int = 2,
         num_stages: int = 2,
         num_tournaments: int = 3,
-        k: int | None = None,
         item_label: str = "item",
         system_prompt: str | None = None,
         name: str | None = None,
@@ -94,7 +96,6 @@ class TourRankRanker(BaseRanker):
         self.advance_per_group = advance_per_group
         self.num_stages = num_stages
         self.num_tournaments = num_tournaments
-        self.k = k
         self.seed = seed
         self.characters = [chr(ord("A") + i) for i in range(group_size)]
         self._warned_num_samples = False
@@ -230,9 +231,12 @@ class TourRankRanker(BaseRanker):
                 total_points[cid] += p
 
         ranked = sorted(candidates, key=lambda c: total_points[c.id], reverse=True)
-        if self.k is not None:
-            ranked = ranked[: self.k]
         return [
-            Candidate(id=c.id, text=c.text, score=float(total_points[c.id]), metadata=c.metadata)
+            Candidate(
+                id=c.id,
+                text=c.text,
+                score=float(total_points[c.id]),
+                metadata=copy_metadata(c.metadata),
+            )
             for c in ranked
         ]

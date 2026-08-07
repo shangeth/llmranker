@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 
 from .prompts import extract_final_answer
 
@@ -42,19 +43,20 @@ def resolve_weights(
     if not criteria:
         raise ValueError("criteria must not be empty")
 
-    values = list(criteria.values())
+    values: list[Any] = list(criteria.values())
     is_numeric = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values)
     is_priority = all(v in _PRIORITY_TIERS for v in values)
 
     if is_numeric:
-        if any(v <= 0 for v in values):
+        numeric = {str(k): float(v) for k, v in criteria.items()}
+        if any(v <= 0 for v in numeric.values()):
             raise ValueError("criteria weights must all be > 0")
-        total = sum(values)
-        return {k: v / total for k, v in criteria.items()}
+        total = sum(numeric.values())
+        return {k: v / total for k, v in numeric.items()}
 
     if is_priority:
         base = int(score_range) * len(criteria) + 1
-        raw = {k: base ** _TIER_RANK[v] for k, v in criteria.items()}
+        raw = {str(k): float(base ** _TIER_RANK[str(v)]) for k, v in criteria.items()}
         total = sum(raw.values())
         return {k: w / total for k, w in raw.items()}
 

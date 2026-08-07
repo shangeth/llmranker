@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from ..llm import LLMConfig, call_rerank
-from ..types import Candidate
+from ..types import Candidate, copy_metadata
 
 logger = logging.getLogger("llmranker")
 
@@ -57,6 +57,8 @@ class RerankAPIRanker:
     order with a score of `None`, so `rank()` never silently loses a
     candidate.
     """
+
+    score_kind = "provider_relevance"
 
     def __init__(
         self,
@@ -123,7 +125,7 @@ class RerankAPIRanker:
                     id=source.id,
                     text=source.text,
                     score=result.relevance_score,
-                    metadata=source.metadata,
+                    metadata=copy_metadata(source.metadata),
                 )
             )
 
@@ -132,7 +134,7 @@ class RerankAPIRanker:
         # order behind the scored candidates, scored None to mark it as
         # "not ranked" rather than "ranked worst".
         ranked.extend(
-            Candidate(id=c.id, text=c.text, score=None, metadata=c.metadata)
+            Candidate(id=c.id, text=c.text, score=None, metadata=copy_metadata(c.metadata))
             for i, c in enumerate(candidates)
             if i not in seen
         )

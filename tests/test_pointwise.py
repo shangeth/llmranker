@@ -122,9 +122,7 @@ def test_pointwise_num_samples_warns_at_zero_temperature(fake_llm, caplog):
 def test_pointwise_structured_output_parses_json_score(fake_llm):
     fake_llm.responses = ['{"score": 7}']
     candidate = Candidate(id="x", text="a nice hotel")
-    ranker = PointwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), structured_output=True
-    )
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), structured_output=True)
 
     assert ranker.score("query", candidate) == 7
     assert fake_llm.calls[0]["response_format"]["type"] == "json_schema"
@@ -133,9 +131,7 @@ def test_pointwise_structured_output_parses_json_score(fake_llm):
 def test_pointwise_structured_output_falls_back_to_regex_on_malformed_json(fake_llm):
     fake_llm.responses = ["not json, just the number 6"]
     candidate = Candidate(id="x", text="a nice hotel")
-    ranker = PointwiseRanker(
-        LLMConfig(model="gpt-4o-mini"), structured_output=True
-    )
+    ranker = PointwiseRanker(LLMConfig(model="gpt-4o-mini"), structured_output=True)
 
     assert ranker.score("query", candidate) == 6
 

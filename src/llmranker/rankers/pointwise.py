@@ -14,7 +14,7 @@ from ..prompts import (
     pointwise_system_prompt,
     pointwise_user_prompt,
 )
-from ..types import Candidate
+from ..types import Candidate, copy_metadata
 from .base import BaseRanker
 
 logger = logging.getLogger("llmranker")
@@ -83,6 +83,8 @@ class PointwiseRanker(BaseRanker):
     plain `float` return and re-extracts on every call in `"auto"` mode,
     so prefer `rank()` over repeated `score()` calls when using it.
     """
+
+    score_kind = "relevance"
 
     def __init__(
         self,
@@ -202,7 +204,10 @@ class PointwiseRanker(BaseRanker):
             responses = self._call_many(batches, response_format)
             scored = [
                 Candidate(
-                    id=c.id, text=c.text, score=self._parse_score(r.text), metadata=c.metadata
+                    id=c.id,
+                    text=c.text,
+                    score=self._parse_score(r.text),
+                    metadata=copy_metadata(c.metadata),
                 )
                 for c, r in zip(candidates, responses)
             ]
@@ -214,9 +219,11 @@ class PointwiseRanker(BaseRanker):
             for i, c in enumerate(candidates):
                 chunk = responses[i * n : (i + 1) * n]
                 avg = sum(self._parse_score(r.text) for r in chunk) / n
-                scored.append(Candidate(id=c.id, text=c.text, score=avg, metadata=c.metadata))
+                scored.append(
+                    Candidate(id=c.id, text=c.text, score=avg, metadata=copy_metadata(c.metadata))
+                )
 
-        scored.sort(key=lambda c: c.score, reverse=True)
+        scored.sort(key=lambda c: c.score or 0.0, reverse=True)
         return scored
 
     # -- multi-criteria path ------------------------------------------------
@@ -254,6 +261,9 @@ class PointwiseRanker(BaseRanker):
                 {n: 1.0 for n in names}, self.max_score - self.min_score
             )
             return names, weights, "auto"
+        # Only reachable for the dict form: `criteria=None` short-circuits
+        # before this method is called, and "auto" is handled above.
+        assert isinstance(self.criteria, dict) and self._criteria_weights is not None
         return list(self.criteria.keys()), self._criteria_weights, "user"
 
     def _build_multi_criteria_messages(
@@ -341,7 +351,7 @@ class PointwiseRanker(BaseRanker):
             }
             scored.append(Candidate(id=c.id, text=c.text, score=final, metadata=metadata))
 
-        scored.sort(key=lambda c: c.score, reverse=True)
+        scored.sort(key=lambda c: c.score or 0.0, reverse=True)
         return scored
 
     # -- public API -----------------------------------------------------
