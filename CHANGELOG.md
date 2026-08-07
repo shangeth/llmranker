@@ -64,6 +64,12 @@ implementation turned up six divergences.
   `pip install "llmranker[benchmark]"`.
 - **Minimum Python is now 3.10** (3.9 is end-of-life); 3.13 added to the
   supported set.
+- **Minimum litellm raised to 1.45.0**, the first release containing
+  `litellm.rerank`. The previously declared floor of 1.40.0 was never
+  installable with this package — it predates both `rerank` and
+  `litellm.exceptions.InternalServerError`, so importing `llmranker` at
+  all raised `AttributeError`. Caught by the new minimum-dependency CI
+  job on its first run.
 
 ### Added
 

@@ -30,7 +30,7 @@ classifiers = [
 # the only numeric deps, both needed by llmranker.metrics; pandas is an
 # extra because only compare_rankers() uses it.
 dependencies = [
-    "litellm>=1.40.0",
+    "litellm>=1.45.0",  # first release with litellm.rerank
     "tenacity>=8.2.0",
     "numpy>=1.23",
     "scipy>=1.9",
@@ -76,3 +76,16 @@ files = ["src/llmranker"]
 # check focused on our own annotations rather than third-party gaps.
 ignore_missing_imports = true
 warn_unused_ignores = true
+
+# numpy's bundled stubs use PEP 695 `type` statements, which mypy can only
+# parse when targeting 3.12+. Since `python_version` above is pinned to our
+# actual support floor, mypy would otherwise reject those stubs as a syntax
+# error. We don't type-check third-party internals anyway, so skip
+# descending into them -- `follow_imports_for_stubs` is what makes `skip`
+# apply to .pyi files rather than only to .py.
+follow_imports_for_stubs = true
+
+[[tool.mypy.overrides]]
+module = ["numpy.*", "scipy.*", "pandas.*", "litellm.*"]
+follow_imports = "skip"
+ignore_missing_imports = true

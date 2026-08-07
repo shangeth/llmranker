@@ -30,9 +30,6 @@ jobs:
       - name: Check formatting
         run: ruff format --check src tests scripts
 
-      - name: Type check
-        run: mypy src/llmranker
-
       # Examples and scripts aren't importable in CI (no API keys), but a
       # compile check still catches the case that actually bites: a public
       # API change landing without them being updated.
@@ -44,6 +41,19 @@ jobs:
         # faked), so a coverage floor is cheap to enforce and catches whole
         # code paths going untested.
         run: pytest --cov=llmranker --cov-report=term-missing --cov-fail-under=90
+
+  # Runs once rather than per-matrix-entry: the check is about our own
+  # annotations, which don't vary by interpreter (`python_version` in
+  # pyproject pins the target).
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: mypy
 
   # The declared floor in pyproject.toml is only meaningful if something
   # actually installs it; the matrix above always resolves to the newest.
@@ -57,7 +67,7 @@ jobs:
       - name: Install with oldest supported dependencies
         run: |
           pip install -e ".[dev]"
-          pip install "litellm==1.40.0" "tenacity==8.2.0" "numpy==1.23.*" "scipy==1.9.*" "pandas==1.5.*"
+          pip install "litellm==1.45.0" "tenacity==8.2.0" "numpy==1.23.*" "scipy==1.9.*" "pandas==1.5.*"
       - name: Run tests
         run: pytest -q
 
