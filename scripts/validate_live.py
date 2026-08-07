@@ -40,6 +40,12 @@ from pathlib import Path
 # output is exercisable on it; see https://openrouter.ai/api/v1/models.
 DEFAULT_MODEL = "openrouter/google/gemma-4-26b-a4b-it:free"
 
+# RerankAPIRanker talks to a rerank endpoint, not a chat model, so it needs
+# its own provider. Skipped unless COHERE_API_KEY is set. Cohere's trial key
+# allows 1,000 calls/month and 10 rerank requests/minute -- and one call
+# scores the whole candidate list, so this phase is cheap.
+DEFAULT_RERANK_MODEL = "cohere/rerank-v3.5"
+
 QUERY = "quiet family hotel walking distance to museums, not on the beach"
 HOTELS = [
     ("h1", "Beachfront party resort with a nightclub and swim-up bar. Adults only."),
@@ -97,12 +103,13 @@ def openrouter_budget() -> str:
     )
 
 
-def build_rankers(model: str):
+def build_rankers(model: str, rerank_model: str | None):
     from llmranker import (
         ListwiseRanker,
         LLMConfig,
         PairwiseRanker,
         PointwiseRanker,
+        RerankAPIRanker,
         SetwiseRanker,
         TourRankRanker,
     )
@@ -113,7 +120,7 @@ def build_rankers(model: str):
     # (name, ranker, candidate count, rough call cost) -- the O(n^2) and
     # multi-pass strategies get a shorter list so a full sweep still fits in
     # a free-tier day.
-    return [
+    phases = [
         ("pointwise", PointwiseRanker(config(), item_label="hotel", max_concurrency=3), 5, 5),
         ("setwise", SetwiseRanker(config(), num_child=3, item_label="hotel"), 5, 6),
         ("listwise", ListwiseRanker(config(), item_label="hotel"), 5, 1),
@@ -161,11 +168,26 @@ def build_rankers(model: str):
             4,
         ),
     ]
+    if rerank_model and os.environ.get("COHERE_API_KEY"):
+        phases.append(
+            (
+                "rerank_api",
+                RerankAPIRanker(LLMConfig(model=rerank_model, timeout=60)),
+                5,
+                1,
+            )
+        )
+    return phases
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default=DEFAULT_MODEL, help="LiteLLM model string")
+    parser.add_argument(
+        "--rerank-model",
+        default=DEFAULT_RERANK_MODEL,
+        help="rerank endpoint for RerankAPIRanker; skipped without COHERE_API_KEY",
+    )
     parser.add_argument("--budget", type=int, default=45, help="max requests to spend")
     parser.add_argument("--only", nargs="*", help="run only these phases")
     parser.add_argument(
@@ -207,7 +229,7 @@ def main() -> int:
 
     spent = 0
     failures = 0
-    for name, ranker, n, cost in build_rankers(args.model):
+    for name, ranker, n, cost in build_rankers(args.model, args.rerank_model):
         if args.only and name not in args.only:
             continue
         if spent + cost > args.budget:
@@ -240,6 +262,12 @@ def main() -> int:
         )
         if name in ("pointwise", "reasoning"):
             print(f"  {'':18} scores={[c.score for c in result]}")
+        if name == "rerank_api":
+            print(
+                f"  {'':18} search_units={ranker.total_search_units} "
+                f"cost={ranker.estimate_cost_usd()} (None = billed per search unit, "
+                f"not per token)"
+            )
         if name == "criteria_auto" and result[0].metadata:
             print(f"  {'':18} criteria={list(result[0].metadata['criteria_scores'])}")
         time.sleep(args.pause)

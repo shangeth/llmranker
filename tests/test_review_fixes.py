@@ -318,6 +318,23 @@ def test_every_ranker_returns_all_candidates(fake_llm):
         assert len(ranker.rank("q", candidates)) == 6, ranker.name
 
 
+def test_cascade_is_the_documented_exception_to_that_rule(fake_llm):
+    """CascadeRanker returns narrow_to candidates, not all of them --
+    discarding what the cheap stage rejected is the point of it. The README
+    states the invariant and this exception together; this pins the pair."""
+    from llmranker.rankers.cascade import CascadeRanker
+
+    fake_llm.responses = lambda m: "5 A B"
+    candidates = [Candidate(id=str(i), text=f"item-{i}") for i in range(6)]
+    cascade = CascadeRanker(
+        narrow=PointwiseRanker(LLMConfig(model="m")),
+        refine=SetwiseRanker(LLMConfig(model="m"), num_child=3),
+        narrow_to=3,
+    )
+
+    assert len(cascade.rank("q", candidates)) == 3
+
+
 def test_score_kind_declares_how_to_read_score():
     from llmranker.rankers.cascade import CascadeRanker
     from llmranker.rankers.rerank_api import RerankAPIRanker

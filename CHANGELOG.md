@@ -87,7 +87,13 @@ implementation turned up six divergences.
   counts and any unparseable response. The test suite is fully offline by
   design, so nothing in it demonstrates the package works against an actual
   model; this is that check. Defaults to an OpenRouter free model, takes any
-  LiteLLM model string via `--model`, and has a request budget guard.
+  LiteLLM model string via `--model`, and has a request budget guard. The
+  `rerank_api` phase needs a rerank endpoint rather than a chat model and is
+  skipped unless `COHERE_API_KEY` is set (`--rerank-model` to change it).
+- README documents `CascadeRanker` as the one deliberate exception to
+  "`rank()` returns every candidate you passed in" -- it returns
+  `narrow_to`, since discarding what the cheap stage rejected is the point
+  of it. The blanket claim added earlier in this release was wrong.
 - README notes two behaviors confirmed against a live model: LiteLLM's
   stderr chatter and the one-liner to silence it, and that small models
   saturate `PointwiseRanker`'s scale (a live run scored five candidates

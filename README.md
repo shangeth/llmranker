@@ -505,6 +505,10 @@ after each call.
 into establishing the top of the list; they never drop candidates. Slice
 the result yourself for a top-k.
 
+The one deliberate exception is `CascadeRanker`, which returns `narrow_to`
+candidates — discarding the ones the cheap stage rejected is the entire
+point of it, and the expensive stage never sees them.
+
 **`Candidate.score` means different things per strategy**, so each ranker
 declares which via `ranker.score_kind`:
 
@@ -556,6 +560,10 @@ python scripts/validate_live.py --check-budget   # no requests spent
 python scripts/validate_live.py                  # full sweep, ~45 requests
 python scripts/validate_live.py --model gpt-4o-mini --only setwise listwise
 ```
+
+`RerankAPIRanker` needs a rerank endpoint rather than a chat model, so its
+phase is skipped unless `COHERE_API_KEY` is set (Cohere's trial key allows
+1,000 calls/month, and one call scores the whole candidate list).
 
 It runs every strategy against a ranking task with an obvious right
 answer and reports the ordering, call count, and any response that failed
